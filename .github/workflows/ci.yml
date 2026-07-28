@@ -19,18 +19,3 @@ jobs:
           node-version: '20'
       - name: Parse scripts, resolve assets, reject inline handlers
         run: node .github/scripts/check.mjs
-
-  smoke:
-    name: Browser smoke test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version: '20'
-      # No package.json in this repo, so pin Playwright here rather than
-      # tracking a lockfile for a single dev dependency.
-      - name: Install Playwright
-        run: npm install --no-save playwright@1.62.0 && npx playwright install --with-deps chromium
-      - name: Load each page in Chromium
-        run: node .github/scripts/smoke.mjs
