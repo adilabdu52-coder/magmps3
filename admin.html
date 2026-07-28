@@ -142,8 +142,20 @@
         <div class="field"><label for="dvLiters">Litres delivered</label>
           <input type="number" id="dvLiters" min="0" step="1" inputmode="numeric"/></div>
       </div>
+      <div class="field"><label for="dvNote">Note (supplier, waybill no.)</label>
+        <input type="text" id="dvNote" placeholder="optional"/></div>
       <button class="btn btn-gold" id="dvBtn">🚚 Record Delivery</button>
       <div class="msg" id="dvMsg"></div>
+      <div class="divider"></div>
+      <h2>Recent deliveries</h2>
+      <p class="card-note">Every delivery is recorded against the tank and the person who entered it, so a stock level can always be traced back to how it got there.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Site</th><th>Tank</th>
+            <th class="mono">Litres</th><th>Note</th><th>By</th></tr></thead>
+          <tbody id="dvBody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -546,15 +558,34 @@ async function loadTanks() {
   } catch (e) { loadFailed("loadTanks", e); }
 }
 
+async function loadDeliveries() {
+  try {
+    const rows = await rpc("list_deliveries", { p_station_id: stationParam(), p_limit: 50 }) || [];
+    $("dvBody").innerHTML = rows.length ? rows.map(d => `<tr>
+      <td class="mono">${esc(fmt.stamp(d.created_at))}</td>
+      <td>${esc(d.station_name)}</td>
+      <td>${esc(d.tank_name || "—")}${d.fuel_type ? " · " + esc(d.fuel_type) : ""}</td>
+      <td class="mono">${fmt.int(d.liters)}</td>
+      <td>${esc(d.note || "")}</td>
+      <td class="by">${esc(d.recorded_by_name || "—")}</td></tr>`).join("")
+      : '<tr><td colspan="6" class="empty">No deliveries recorded</td></tr>';
+  } catch (e) { loadFailed("loadDeliveries", e); }
+}
+
 async function recordDelivery() {
   const tank = $("dvTank").value;
   const liters = parseFloat($("dvLiters").value);
   if (!tank || !(liters > 0)) { msg("dvMsg", "Choose a tank and enter litres", "error"); return; }
   const btn = $("dvBtn"); btn.disabled = true;
   try {
-    const r = await rpc("admin_record_delivery", { p_tank_id: tank, p_liters: liters });
+    const r = await rpc("admin_record_delivery", {
+      p_tank_id: Number(tank), p_liters: liters, p_note: $("dvNote").value.trim() || null });
     msg("dvMsg", r.message || (r.success ? "Delivery recorded" : "Failed"), r.success ? "success" : "error");
-    if (r.success) { toast("Delivery recorded ✔", "ok"); $("dvLiters").value = ""; loadTanks(); loadDashboard(); }
+    if (r.success) {
+      toast("Delivery recorded ✔", "ok");
+      $("dvLiters").value = ""; $("dvNote").value = "";
+      loadTanks(); loadDeliveries(); loadDashboard();
+    }
   } catch (e) { msg("dvMsg", "Connection error", "error"); loadFailed("recordDelivery", e); }
   finally { btn.disabled = false; }
 }
@@ -720,7 +751,7 @@ function applySelection() {
 
   renderRail(); renderDashStats();
   if (isAll) renderStockTable(); else renderOneSite();
-  loadPrices(); loadHistory(); loadTanks(); loadCustomers(); loadSales(); loadExpenses(); renderStaff();
+  loadPrices(); loadHistory(); loadTanks(); loadDeliveries(); loadCustomers(); loadSales(); loadExpenses(); renderStaff();
 }
 
 function bind() {
@@ -757,7 +788,7 @@ function bind() {
 }
 
 function refreshAll() {
-  loadDashboard(); loadTanks(); loadSales(); loadCustomers(); loadExpenses(); loadStaff();
+  loadDashboard(); loadTanks(); loadDeliveries(); loadSales(); loadCustomers(); loadExpenses(); loadStaff();
 }
 
 (async function init() {
