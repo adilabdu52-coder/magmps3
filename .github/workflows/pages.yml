@@ -1,0 +1,47 @@
+name: Deploy to Pages
+
+# Publishes the site on every push to main. `enablement: true` below turns
+# Pages on the first time this runs, so the repository setting does not have
+# to be changed by hand.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time; let a run in progress finish rather than
+# cancelling it half-published.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Turn Pages on if it is not already
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # The whole repository is the site - there is no build step. The
+      # supabase/ and .github/ directories ride along harmlessly; the SQL is
+      # already public in the repo either way.
+      - name: Package the site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
