@@ -1,8 +1,11 @@
 name: Deploy to Pages
 
-# Publishes the site on every push to main. `enablement: true` below turns
-# Pages on the first time this runs, so the repository setting does not have
-# to be changed by hand.
+# Publishes the site on every push to main.
+#
+# There is no configure-pages step: the workflow token cannot create a Pages
+# site ("Resource not accessible by integration"), so Pages has to be switched
+# on once by hand under Settings -> Pages -> Source: GitHub Actions. Once it
+# is, upload-pages-artifact and deploy-pages need nothing else.
 
 on:
   push:
@@ -28,11 +31,6 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Turn Pages on if it is not already
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       # The whole repository is the site - there is no build step. The
       # supabase/ and .github/ directories ride along harmlessly; the SQL is
