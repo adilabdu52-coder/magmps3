@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="theme-color" content="#0e1520"/>
+<title>MAGPMS — Sign in</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<button class="theme-btn login-theme" id="themeBtn" aria-label="Switch theme">🌙</button>
+
+<div id="loginPage">
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="logo-ring">⛽</div>
+      <h1>MAGPMS</h1>
+      <p>Mohamed Abdu Hirna Gomeju Petroleum</p>
+      <span class="cloud-tag">☁ 5 branches · Oromia &amp; Dire Dawa</span>
+    </div>
+
+    <form class="login-card" id="loginCard" autocomplete="on">
+      <div class="field">
+        <label for="lgEmail">Email</label>
+        <input type="email" id="lgEmail" autocomplete="username" required/>
+      </div>
+      <div class="field">
+        <label for="lgPass">Password</label>
+        <input type="password" id="lgPass" autocomplete="current-password" required/>
+      </div>
+      <button class="btn btn-gold" id="lgBtn" type="submit">🔐 Sign In</button>
+      <div class="msg" id="lgMsg"></div>
+      <div class="switch-link">New staff member? <a id="toSignup" role="button" tabindex="0">Create account</a></div>
+    </form>
+
+    <form class="login-card hidden" id="signupCard" autocomplete="on">
+      <div class="field">
+        <label for="suName">Full Name</label>
+        <input type="text" id="suName" autocomplete="name" required/>
+      </div>
+      <div class="field">
+        <label for="suPhone">Phone</label>
+        <input type="tel" id="suPhone" placeholder="09xxxxxxxx" autocomplete="tel"/>
+      </div>
+      <div class="field">
+        <label for="suEmail">Email</label>
+        <input type="email" id="suEmail" autocomplete="username" required/>
+      </div>
+      <div class="field">
+        <label for="suPass">Password (min 8)</label>
+        <input type="password" id="suPass" autocomplete="new-password" minlength="8" required/>
+      </div>
+      <button class="btn btn-gold" id="suBtn" type="submit">✍ Create Staff Account</button>
+      <div class="msg" id="suMsg"></div>
+      <div class="field-hint">An admin must approve the account and assign a branch before you can sign in</div>
+      <div class="switch-link">Already have an account? <a id="toLogin" role="button" tabindex="0">Sign in</a></div>
+    </form>
+  </div>
+</div>
+
+<script type="module">
+import { supabase, rpc, signIn, me } from "./config.js";
+import { msg, toast } from "./ui.js";
+
+const $ = id => document.getElementById(id);
+
+/* Already signed in? Go straight through, so a returning cashier does not
+   re-enter a password every shift. */
+(async () => {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return;
+  const staff = await me().catch(() => null);
+  if (staff?.status === "approved") {
+    location.replace(staff.role === "admin" ? "admin.html" : "staff.html");
+  }
+})();
+
+function show(which) {
+  $("loginCard").classList.toggle("hidden", which !== "login");
+  $("signupCard").classList.toggle("hidden", which !== "signup");
+}
+$("toSignup").addEventListener("click", () => show("signup"));
+$("toLogin").addEventListener("click", () => show("login"));
+
+$("loginCard").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = $("lgBtn");
+  btn.disabled = true; btn.textContent = "Signing in...";
+  try {
+    const staff = await signIn($("lgEmail").value.trim(), $("lgPass").value);
+    if (!staff) {
+      msg("lgMsg", "No staff record for this account. Ask an admin to set one up.", "error");
+      return;
+    }
+    if (staff.status !== "approved") {
+      msg("lgMsg", `Account is ${staff.status}. An admin must approve it first.`, "error");
+      return;
+    }
+    if (staff.role !== "admin" && !staff.station_id) {
+      msg("lgMsg", "No branch assigned yet. Ask an admin to assign one.", "error");
+      return;
+    }
+    msg("lgMsg", "Welcome, " + staff.full_name, "success");
+    setTimeout(() => location.replace(staff.role === "admin" ? "admin.html" : "staff.html"), 400);
+  } catch (err) {
+    msg("lgMsg", err.message || "Sign in failed", "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "🔐 Sign In";
+  }
+});
+
+$("signupCard").addEventListener("submit", async e => {
+  e.preventDefault();
+  const name = $("suName").value.trim();
+  const pass = $("suPass").value;
+  if (!name || pass.length < 8) {
+    msg("suMsg", "Fill every field; password must be at least 8 characters", "error");
+    return;
+  }
+  const btn = $("suBtn");
+  btn.disabled = true; btn.textContent = "Creating...";
+  try {
+    const { error } = await supabase.auth.signUp({
+      email: $("suEmail").value.trim(),
+      password: pass
+    });
+    if (error) throw new Error(error.message);
+
+    /* The auth user exists; this creates the staff row against it. Status is
+       pending and station is null - an admin assigns both. */
+    await rpc("register_staff", { p_full_name: name, p_phone: $("suPhone").value.trim() });
+
+    msg("suMsg", "Account created. An admin must approve it before you can sign in.", "success");
+    toast("Account created ✔", "ok");
+    ["suName", "suPhone", "suEmail", "suPass"].forEach(i => { $(i).value = ""; });
+  } catch (err) {
+    msg("suMsg", err.message || "Could not create the account", "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "✍ Create Staff Account";
+  }
+});
+</script>
+</body>
+</html>

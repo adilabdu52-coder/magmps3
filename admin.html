@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="theme-color" content="#0e1520"/>
+<title>MAGPMS — Admin</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div id="loading">Loading...</div>
+<div id="app" style="display:none">
+
+<header>
+  <button class="menu-btn" data-menu-toggle aria-label="Menu">☰</button>
+  <div class="brand">⛽ MAGPMS<small id="whoami"></small></div>
+  <div class="h-actions">
+    <button class="theme-btn" id="themeBtn" aria-label="Switch theme">🌙</button>
+    <button class="btn btn-out" id="logoutBtn">Log Out</button>
+  </div>
+</header>
+
+<div id="menuOverlay" data-menu-toggle></div>
+<nav id="sideMenu">
+  <div class="menu-head">
+    <div class="menu-logo">⛽</div>
+    <div><div class="menu-title">MAGPMS</div><div class="menu-sub">Central admin</div></div>
+  </div>
+  <div class="mi active" data-s="dashboard"><span class="ic">📊</span> Dashboard</div>
+  <div class="mi" data-s="prices"><span class="ic">💲</span> Prices</div>
+  <div class="mi" data-s="staff"><span class="ic">👥</span> Staff</div>
+  <div class="mi" data-s="tanks"><span class="ic">🛢</span> Tanks &amp; Delivery</div>
+  <div class="mi" data-s="credit"><span class="ic">🧾</span> Credit</div>
+  <div class="mi" data-s="sales"><span class="ic">💰</span> Sales</div>
+  <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
+</nav>
+
+<div class="wrap">
+
+  <!-- Site rail: drives every section below -->
+  <div id="railWrap">
+    <div class="rail-label">Site</div>
+    <div class="rail" id="rail" role="tablist" aria-label="Select site"></div>
+  </div>
+
+  <!-- ===== DASHBOARD ===== -->
+  <div class="section show" id="sec-dashboard">
+    <h1 class="display" id="dashTitle">Dashboard</h1>
+    <div class="sub" id="dashSub">—</div>
+
+    <div class="stats" id="dashStats"></div>
+    <div class="refresh-line"><span id="updStamp">—</span><button id="refreshBtn">↻ Refresh now</button></div>
+
+    <div class="card" id="allSitesCard">
+      <h2>Stock by site</h2>
+      <p class="card-note">Sorted lowest first, so what needs a delivery reads at the top.
+        "Low tanks" counts those under 30% — a branch can look comfortable overall and still
+        have one tank at reorder level.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>Site</th><th>Low tanks</th><th>Level</th>
+            <th class="mono">Litres</th><th class="mono">Capacity</th>
+            <th class="mono">Sales today</th><th>Status</th>
+          </tr></thead>
+          <tbody id="stockBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card hidden" id="oneSiteCard">
+      <h2 id="oneSiteTanksTitle">Tanks</h2>
+      <div id="oneSiteTanks" class="empty">Loading...</div>
+      <div class="divider"></div>
+      <h2>Recent transactions</h2>
+      <div id="oneSiteTx" class="empty">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ===== PRICES ===== -->
+  <div class="section" id="sec-prices">
+    <h1 class="display">Prices</h1>
+    <div class="sub" id="priceSub">—</div>
+
+    <div class="card" id="priceCard">
+      <h2>Set prices</h2>
+      <p class="card-note">Prices are per branch. Fuels come from the database — adding one is a data change, not a code change.</p>
+      <div id="priceFields" class="empty">Loading...</div>
+      <button class="btn btn-gold" id="priceBtn">💾 Update Prices</button>
+      <div class="msg" id="priceMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2 id="histTitle">Price history</h2>
+      <p class="card-note">Every change, and who made it. Prices hold flat until someone changes them,
+        so the line steps rather than slopes.</p>
+      <div class="chart-head">
+        <div class="legend" id="histLegend"></div>
+        <div class="hist-range" id="histRange"></div>
+      </div>
+      <div class="chart-box" id="chartBox">
+        <svg class="chart" id="histChart" viewBox="0 0 660 190" role="img"
+             aria-label="Fuel price history"></svg>
+        <div class="tip" id="tip"></div>
+      </div>
+      <div class="table-scroll" style="margin-top:18px">
+        <table>
+          <thead><tr><th>Date</th><th>Fuel</th><th class="mono">From</th>
+            <th class="mono">To</th><th class="mono">Change</th><th>Changed by</th></tr></thead>
+          <tbody id="histBody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== STAFF ===== -->
+  <div class="section" id="sec-staff">
+    <h1 class="display">Staff</h1><div class="sub">Approval, role and branch assignment</div>
+    <div class="card">
+      <div class="card-tools">
+        <input type="search" id="staffSearch" placeholder="🔍 Search name…"/>
+      </div>
+      <div class="tabs" id="staffTabs">
+        <button class="tab active" data-filter="pending">Pending</button>
+        <button class="tab" data-filter="approved">Approved</button>
+        <button class="tab" data-filter="rejected">Rejected</button>
+        <button class="tab" data-filter="all">All</button>
+      </div>
+      <div id="staffList" class="empty">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ===== TANKS ===== -->
+  <div class="section" id="sec-tanks">
+    <h1 class="display">Tanks</h1><div class="sub" id="tankSub">—</div>
+    <div class="card">
+      <div id="tankList" class="empty">Loading...</div>
+      <div class="divider"></div>
+      <h2>Record a delivery</h2>
+      <div class="grid2">
+        <div class="field"><label for="dvTank">Tank</label><select id="dvTank"></select></div>
+        <div class="field"><label for="dvLiters">Litres delivered</label>
+          <input type="number" id="dvLiters" min="0" step="1" inputmode="numeric"/></div>
+      </div>
+      <button class="btn btn-gold" id="dvBtn">🚚 Record Delivery</button>
+      <div class="msg" id="dvMsg"></div>
+    </div>
+  </div>
+
+  <!-- ===== CREDIT ===== -->
+  <div class="section" id="sec-credit">
+    <h1 class="display">Credit</h1><div class="sub" id="creditSub">—</div>
+    <div class="card">
+      <h2>Add a customer</h2>
+      <p class="card-note">Customers belong to one branch — a sale at another branch will not find them.</p>
+      <div class="grid2">
+        <div class="field"><label for="ccName">Name</label><input type="text" id="ccName"/></div>
+        <div class="field"><label for="ccPhone">Phone</label><input type="tel" id="ccPhone" placeholder="09xxxxxxxx"/></div>
+        <div class="field"><label for="ccPlate">Plate no</label><input type="text" id="ccPlate"/></div>
+        <div class="field"><label for="ccLimit">Credit limit (0 = unlimited)</label>
+          <input type="number" id="ccLimit" min="0" step="1" value="0"/></div>
+      </div>
+      <button class="btn btn-gold" id="ccBtn">➕ Add Customer</button>
+      <div class="msg" id="ccMsg"></div>
+      <div class="divider"></div>
+      <div id="custList" class="empty">Loading...</div>
+    </div>
+  </div>
+
+  <!-- ===== SALES ===== -->
+  <div class="section" id="sec-sales">
+    <h1 class="display">Sales</h1><div class="sub" id="salesSub">—</div>
+    <div class="card">
+      <div class="card-tools"><input type="search" id="saleSearch" placeholder="🔍 Search staff or fuel…"/></div>
+      <div class="tabs" id="payTabs">
+        <button class="tab active" data-pay="all">All</button>
+        <button class="tab" data-pay="cash">Cash</button>
+        <button class="tab" data-pay="telebirr">Telebirr</button>
+        <button class="tab" data-pay="cbe">CBE</button>
+        <button class="tab" data-pay="credit">Credit</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Site</th><th>Staff</th><th>Fuel</th>
+            <th class="mono">Litres</th><th class="mono">ETB</th><th>Pay</th></tr></thead>
+          <tbody id="salesBody"><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== EXPENSES ===== -->
+  <div class="section" id="sec-expenses">
+    <h1 class="display">Expenses</h1><div class="sub" id="expSub">—</div>
+    <div class="card">
+      <div class="grid2">
+        <div class="field"><label for="exCat">Category</label><input type="text" id="exCat" placeholder="Fuel delivery, salary, repair…"/></div>
+        <div class="field"><label for="exAmt">Amount (ETB)</label>
+          <input type="number" id="exAmt" min="0" step="0.01" inputmode="decimal"/></div>
+      </div>
+      <div class="field"><label for="exDesc">Description</label><input type="text" id="exDesc"/></div>
+      <button class="btn btn-gold" id="exBtn">➕ Add Expense</button>
+      <div class="msg" id="exMsg"></div>
+      <div class="divider"></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Date</th><th>Site</th><th>Category</th><th>Description</th><th class="mono">ETB</th></tr></thead>
+          <tbody id="expBody"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script type="module">
+import { rpc, signOut, requireStaff } from "./config.js";
+import { esc, fmt, msg, toast, loadFailed, confirmDlg, promptNumber,
+         tankRow, tankPct, tankState, tankLabel, stampUpdated } from "./ui.js";
+
+const $ = id => document.getElementById(id);
+
+let admin = null;
+let stations = [];          // [{id, name, town}]
+let selected = "all";       // "all" or a station id
+let dash = [];              // one row per station
+let allStaff = [], allSales = [], staffFilter = "pending", payFilter = "all";
+
+/* A filter for reads, never a grant. The database ignores it for non-admins
+   and scopes them to their own branch regardless. */
+const stationParam = () => (selected === "all" ? null : selected);
+const stationName = id => stations.find(s => s.id === id)?.name || "—";
+
+/* ---------- site rail ---------- */
+function renderRail() {
+  const worst = dash.length ? Math.min(...dash.map(siteFill)) : 100;
+  const chips = [{ id: "all", name: "All sites", st: tankState(worst) }].concat(
+    stations.map(s => {
+      const d = dash.find(x => x.station_id === s.id);
+      return { id: s.id, name: s.name, st: tankState(d ? siteFill(d) : 100) };
+    }));
+  $("rail").innerHTML = chips.map(c =>
+    `<button class="site-chip${c.id === "all" ? " all" : ""}" role="tab"
+       data-site="${esc(c.id)}" aria-selected="${c.id === selected}">
+       <span class="dot ${c.st}"></span>${esc(c.name)}</button>`).join("");
+}
+
+const siteFill = d => (Number(d.stock_liters) / Number(d.capacity_liters)) * 100;
+
+/* ---------- dashboard ---------- */
+async function loadDashboard() {
+  try {
+    dash = await rpc("admin_dashboard") || [];
+    renderRail();
+    renderDashStats();
+    if (selected === "all") renderStockTable(); else renderOneSite();
+    stampUpdated("updStamp");
+  } catch (e) { loadFailed("loadDashboard", e); }
+}
+
+function renderDashStats() {
+  const rows = selected === "all" ? dash : dash.filter(d => d.station_id === selected);
+  const t = rows.reduce((a, d) => ({
+    sales: a.sales + Number(d.sales_today_etb || 0),
+    stock: a.stock + Number(d.stock_liters || 0),
+    cap:   a.cap   + Number(d.capacity_liters || 0),
+    credit:a.credit+ Number(d.credit_etb || 0),
+    duty:  a.duty  + Number(d.on_duty || 0),
+    low:   a.low   + Number(d.low_tanks || 0)
+  }), { sales: 0, stock: 0, cap: 0, credit: 0, duty: 0, low: 0 });
+
+  const cards = selected === "all"
+    ? [["Sales today", fmt.int(t.sales), `ETB · all ${rows.length} sites`, "v-gold"],
+       ["Full stock",  fmt.int(t.stock), `Litres of ${fmt.int(t.cap)} capacity`, "v-blue"],
+       ["Credit owed", fmt.int(t.credit), "ETB outstanding", "v-purple"],
+       ["Low tanks",   String(t.low), `across ${rows.length} sites`, t.low ? "v-gold" : "v-green"]]
+    : [["Sales today", fmt.int(t.sales), "ETB · this branch", "v-gold"],
+       ["Stock",       fmt.int(t.stock), `Litres of ${fmt.int(t.cap)} capacity`, "v-blue"],
+       ["Credit owed", fmt.int(t.credit), "ETB outstanding", "v-purple"],
+       ["On duty",     String(t.duty), "Staff checked in", "v-green"]];
+
+  $("dashStats").innerHTML = cards.map(([l, v, u, c]) =>
+    `<div class="scard"><div class="lbl">${l}</div>
+      <div class="val ${c}">${v}</div><div class="unit">${u}</div></div>`).join("");
+}
+
+function renderStockTable() {
+  const rows = [...dash].sort((a, b) => siteFill(a) - siteFill(b));
+  if (!rows.length) {
+    $("stockBody").innerHTML = '<tr><td colspan="7" class="empty">No sites configured</td></tr>';
+    return;
+  }
+  $("stockBody").innerHTML = rows.map(d => {
+    const p = siteFill(d), st = tankState(p);
+    return `<tr>
+      <td><span class="site-name">${esc(d.station_name)}</span><br>
+          <span class="site-town">${esc(d.town || "")}</span></td>
+      <td class="mono">${d.low_tanks ? esc(d.low_tanks) + " low" : "—"}</td>
+      <td><div class="lvl"><span class="bar"><i class="${st === "ok" ? "" : st}" style="width:${p.toFixed(1)}%"></i></span>
+        <span class="pct">${p.toFixed(0)}%</span></div></td>
+      <td class="mono">${fmt.int(d.stock_liters)}</td>
+      <td class="mono">${fmt.int(d.capacity_liters)}</td>
+      <td class="mono">${fmt.int(d.sales_today_etb)}</td>
+      <td><span class="tag ${st === "ok" ? "approved" : st === "warn" ? "pending" : "rejected"}">${tankLabel(p)}</span></td>
+    </tr>`;
+  }).join("");
+}
+
+async function renderOneSite() {
+  const d = dash.find(x => x.station_id === selected);
+  $("oneSiteTanksTitle").textContent = (d ? d.station_name : "Branch") + " — tanks";
+  try {
+    const [tanks, sales] = await Promise.all([
+      rpc("list_tanks", { p_station_id: selected }),
+      rpc("list_sales", { p_station_id: selected, p_limit: 8 })
+    ]);
+    const tl = $("oneSiteTanks");
+    tl.className = Array.isArray(tanks) && tanks.length ? "" : "empty";
+    tl.innerHTML = Array.isArray(tanks) && tanks.length
+      ? tanks.map(tankRow).join("") : "No tanks configured";
+
+    const tx = $("oneSiteTx");
+    const live = (sales || []).filter(s => !s.voided);
+    tx.className = live.length ? "" : "empty";
+    tx.innerHTML = live.length ? live.map(s => `
+      <div class="tx"><div class="l">
+        <h4>${esc(s.fuel_type)} · ${esc(s.liters)} L</h4>
+        <p>${esc(s.staff_name)} · ${esc(fmt.stamp(s.created_at))} · ${esc(s.payment_method)}</p></div>
+        <div class="amt">+${fmt.int(s.total_etb)} ETB</div></div>`).join("")
+      : "No transactions yet";
+  } catch (e) { loadFailed("renderOneSite", e); }
+}
+
+/* ---------- prices ---------- */
+let priceFuels = [];
+
+async function loadPrices() {
+  const box = $("priceFields");
+  if (selected === "all") {
+    box.className = "empty";
+    box.textContent = "Choose a branch above to set its prices";
+    $("priceBtn").disabled = true;
+    return;
+  }
+  $("priceBtn").disabled = false;
+  try {
+    const rows = await rpc("get_prices", { p_station_id: selected });
+    if (!Array.isArray(rows) || !rows.length) {
+      box.className = "empty"; box.textContent = "No fuels configured"; priceFuels = []; return;
+    }
+    priceFuels = rows.map(r => r.fuel_type);
+    box.className = "grid2";
+    box.innerHTML = rows.map(p =>
+      `<div class="field"><label>${esc(p.fuel_type)}</label>
+        <input type="number" data-fuel="${esc(p.fuel_type)}" step="0.01" min="0"
+               inputmode="decimal" value="${esc(p.price_per_liter)}"/></div>`).join("");
+  } catch (e) { loadFailed("loadPrices", e); }
+}
+
+async function savePrices() {
+  const inputs = [...document.querySelectorAll('#priceFields input[data-fuel]')];
+  if (!inputs.length) { msg("priceMsg", "No fuels to update", "error"); return; }
+  const edits = inputs.map(i => ({ fuel: i.getAttribute("data-fuel"), price: parseFloat(i.value) }));
+  const bad = edits.find(e => !(e.price > 0));
+  if (bad) { msg("priceMsg", `Enter a valid price for ${bad.fuel}`, "error"); return; }
+
+  const btn = $("priceBtn"); btn.disabled = true;
+  try {
+    const res = await Promise.all(edits.map(e =>
+      rpc("admin_set_price", { p_station_id: selected, p_fuel_type: e.fuel, p_price: e.price })));
+    const failed = edits.filter((e, i) => !res[i].success).map(e => e.fuel);
+    const ok = failed.length === 0;
+    msg("priceMsg", ok ? "Prices updated" : `Could not update ${failed.join(", ")}`, ok ? "success" : "error");
+    if (ok) { toast("Prices updated ✔", "ok"); loadHistory(); }
+  } catch (e) { msg("priceMsg", "Connection error", "error"); loadFailed("savePrices", e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- price history ---------- */
+/* Two series is the common case; the palette is validated for colour-vision
+   deficiency and deliberately avoids the amber and red used for stock state,
+   so a price line can never be mistaken for a warning. */
+const SERIES_HUES = ["var(--s-1)", "var(--s-2)", "var(--s-3)", "var(--s-4)"];
+const GEO = { w: 660, h: 190, l: 46, r: 54, t: 14, b: 26 };
+
+function niceScale(min, max, target) {
+  const raw = (max - min) / target || 1;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw) ?? 10 * mag;
+  return { lo: Math.floor(min / step) * step, hi: Math.ceil(max / step) * step, step };
+}
+
+async function loadHistory() {
+  const chart = $("histChart");
+  if (selected === "all") {
+    $("histTitle").textContent = "Price history";
+    $("histRange").textContent = "Choose a branch above";
+    $("histLegend").innerHTML = "";
+    chart.innerHTML = "";
+    $("histBody").innerHTML = '<tr><td colspan="6" class="empty">Choose a branch above</td></tr>';
+    return;
+  }
+  $("histTitle").textContent = stationName(selected) + " — price history";
+  try {
+    const rows = await rpc("price_history", { p_station_id: selected, p_days: 180 }) || [];
+    renderHistTable(rows);
+    renderHistChart(rows);
+  } catch (e) { loadFailed("loadHistory", e); }
+}
+
+function renderHistTable(rows) {
+  if (!rows.length) {
+    $("histBody").innerHTML = '<tr><td colspan="6" class="empty">No price changes recorded</td></tr>';
+    return;
+  }
+  const hue = fuelHues(rows);
+  $("histBody").innerHTML = [...rows]
+    .sort((a, b) => new Date(b.changed_at) - new Date(a.changed_at))
+    .map(r => {
+      const d = r.old_price == null ? null : Number(r.new_price) - Number(r.old_price);
+      const cls = d == null ? "" : d > 0 ? "up" : "down";
+      const txt = d == null ? "first set" : `${d > 0 ? "+" : ""}${d.toFixed(2)}`;
+      return `<tr>
+        <td class="mono">${esc(fmt.date(r.changed_at))}</td>
+        <td><span class="fuel-tag"><i style="background:${hue[r.fuel_type]}"></i>${esc(r.fuel_type)}</span></td>
+        <td class="mono">${r.old_price == null ? "—" : fmt.price(r.old_price)}</td>
+        <td class="mono">${fmt.price(r.new_price)}</td>
+        <td class="delta ${cls}">${txt}</td>
+        <td class="by">${esc(r.changed_by_name || "—")}</td></tr>`;
+    }).join("");
+}
+
+function fuelHues(rows) {
+  const fuels = [...new Set(rows.map(r => r.fuel_type))];
+  return Object.fromEntries(fuels.map((f, i) => [f, SERIES_HUES[i % SERIES_HUES.length]]));
+}
+
+function renderHistChart(rows) {
+  const svg = $("histChart");
+  if (!rows.length) { svg.innerHTML = ""; $("histLegend").innerHTML = ""; $("histRange").textContent = ""; return; }
+
+  const hue = fuelHues(rows);
+  const fuels = Object.keys(hue);
+  const byFuel = fuels.map(f => ({
+    fuel: f,
+    pts: rows.filter(r => r.fuel_type === f)
+             .sort((a, b) => new Date(a.changed_at) - new Date(b.changed_at))
+             .map(r => ({ t: new Date(r.changed_at).getTime(), p: Number(r.new_price) }))
+  })).filter(s => s.pts.length);
+
+  const times = byFuel.flatMap(s => s.pts.map(p => p.t));
+  const prices = byFuel.flatMap(s => s.pts.map(p => p.p));
+  const t0 = Math.min(...times), t1 = Math.max(...times);
+  const { lo, hi, step } = niceScale(Math.min(...prices), Math.max(...prices), 3);
+  const pw = GEO.w - GEO.l - GEO.r, ph = GEO.h - GEO.t - GEO.b;
+  const X = t => GEO.l + (t1 === t0 ? pw / 2 : ((t - t0) / (t1 - t0)) * pw);
+  const Y = v => GEO.t + ph - ((v - lo) / (hi - lo || 1)) * ph;
+
+  let g = "";
+  for (let v = lo; v <= hi + 1e-9; v += step) {
+    const y = Y(v);
+    g += `<line class="gridline" x1="${GEO.l}" y1="${y.toFixed(1)}" x2="${GEO.w - GEO.r}" y2="${y.toFixed(1)}"/>`;
+    g += `<text class="axis-txt" x="${GEO.l - 8}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${v.toFixed(0)}</text>`;
+  }
+  [t0, t1].forEach((t, i) => {
+    g += `<text class="axis-txt" x="${X(t).toFixed(1)}" y="${GEO.h - 8}" text-anchor="${i ? "end" : "start"}">${fmt.date(t)}</text>`;
+  });
+
+  // Step-after: a price holds until it is changed, so the line must not slope.
+  byFuel.forEach(s => {
+    let d = `M ${X(s.pts[0].t).toFixed(1)} ${Y(s.pts[0].p).toFixed(1)}`;
+    for (let i = 1; i < s.pts.length; i++) d += ` H ${X(s.pts[i].t).toFixed(1)} V ${Y(s.pts[i].p).toFixed(1)}`;
+    d += ` H ${(GEO.w - GEO.r).toFixed(1)}`;
+    g += `<path class="series" d="${d}" stroke="${hue[s.fuel]}"/>`;
+  });
+  byFuel.forEach(s => s.pts.forEach(p => {
+    g += `<circle class="marker" cx="${X(p.t).toFixed(1)}" cy="${Y(p.p).toFixed(1)}" r="4" fill="${hue[s.fuel]}"/>`;
+  }));
+  // Direct labels, so identity never rests on colour alone.
+  byFuel.forEach(s => {
+    const last = s.pts[s.pts.length - 1];
+    g += `<text class="endlabel" x="${GEO.w - GEO.r + 8}" y="${(Y(last.p) + 4).toFixed(1)}"
+            fill="${hue[s.fuel]}">${fmt.price(last.p)}</text>`;
+  });
+  svg.innerHTML = g;
+
+  $("histLegend").innerHTML = byFuel.map(s =>
+    `<span class="lg"><i style="background:${hue[s.fuel]}"></i>${esc(s.fuel)}</span>`).join("");
+  $("histRange").textContent =
+    `${fmt.date(t0)} – ${fmt.date(t1)} · ${rows.length} change${rows.length === 1 ? "" : "s"}`;
+}
+
+/* ---------- staff ---------- */
+async function loadStaff() {
+  try { allStaff = await rpc("admin_list_staff") || []; renderStaff(); }
+  catch (e) { loadFailed("loadStaff", e); }
+}
+
+function renderStaff() {
+  const q = ($("staffSearch").value || "").trim().toLowerCase();
+  let rows = staffFilter === "all" ? allStaff : allStaff.filter(s => s.status === staffFilter);
+  if (selected !== "all") rows = rows.filter(s => s.station_id === selected || !s.station_id);
+  if (q) rows = rows.filter(s => (s.full_name || "").toLowerCase().includes(q));
+
+  const list = $("staffList");
+  if (!rows.length) { list.className = "empty"; list.textContent = "No staff in this category"; return; }
+  list.className = "";
+  list.innerHTML = rows.map(s => `
+    <div class="row"><div class="info">
+      <h3>${esc(s.full_name)}</h3>
+      <p>${esc(s.email || "")}${s.phone ? " · " + esc(s.phone) : ""} · ${esc(s.role)}</p>
+      <span class="tag ${esc(s.status)}">${esc(s.status)}</span>
+      ${s.station_id ? `<span class="tag open">${esc(stationName(s.station_id))}</span>`
+                     : '<span class="tag pending">no branch</span>'}
+    </div>
+    <div style="display:grid;gap:6px;justify-items:end">
+      <div>
+        ${s.status !== "approved" ? `<button class="btn btn-ok" data-act="staff-status" data-id="${esc(s.id)}" data-status="approved">Approve</button> ` : ""}
+        ${s.status !== "rejected" ? `<button class="btn btn-no" data-act="staff-status" data-id="${esc(s.id)}" data-status="rejected">Reject</button>` : ""}
+      </div>
+      <select class="mini" data-act="staff-station" data-id="${esc(s.id)}">
+        <option value="">— branch —</option>
+        ${stations.map(st => `<option value="${esc(st.id)}" ${st.id === s.station_id ? "selected" : ""}>${esc(st.name)}</option>`).join("")}
+      </select>
+      <select class="mini" data-act="staff-role" data-id="${esc(s.id)}">
+        ${["operator", "accountant", "manager", "admin"].map(r =>
+          `<option value="${r}" ${r === s.role ? "selected" : ""}>${r}</option>`).join("")}
+      </select>
+    </div></div>`).join("");
+}
+
+/* ---------- tanks & delivery ---------- */
+async function loadTanks() {
+  const el = $("tankList");
+  try {
+    const tanks = await rpc("list_tanks", { p_station_id: stationParam() }) || [];
+    el.className = tanks.length ? "" : "empty";
+    el.innerHTML = tanks.length
+      ? tanks.map(t => selected === "all"
+          ? tankRow({ ...t, tank_name: `${stationName(t.station_id)} · ${t.tank_name}` })
+          : tankRow(t)).join("")
+      : "No tanks configured";
+    $("dvTank").innerHTML = tanks.map(t =>
+      `<option value="${esc(t.id)}">${esc(selected === "all" ? stationName(t.station_id) + " · " : "")}${esc(t.tank_name)} (${esc(t.fuel_type)})</option>`).join("");
+  } catch (e) { loadFailed("loadTanks", e); }
+}
+
+async function recordDelivery() {
+  const tank = $("dvTank").value;
+  const liters = parseFloat($("dvLiters").value);
+  if (!tank || !(liters > 0)) { msg("dvMsg", "Choose a tank and enter litres", "error"); return; }
+  const btn = $("dvBtn"); btn.disabled = true;
+  try {
+    const r = await rpc("admin_record_delivery", { p_tank_id: tank, p_liters: liters });
+    msg("dvMsg", r.message || (r.success ? "Delivery recorded" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { toast("Delivery recorded ✔", "ok"); $("dvLiters").value = ""; loadTanks(); loadDashboard(); }
+  } catch (e) { msg("dvMsg", "Connection error", "error"); loadFailed("recordDelivery", e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- credit ---------- */
+async function loadCustomers() {
+  try {
+    const rows = await rpc("list_credit_customers", { p_station_id: stationParam() }) || [];
+    const el = $("custList");
+    el.className = rows.length ? "" : "empty";
+    el.innerHTML = rows.length ? rows.map(c => `
+      <div class="row"><div class="info">
+        <h3>${esc(c.name)}</h3>
+        <p>${selected === "all" ? esc(stationName(c.station_id)) + " · " : ""}${c.plate_no ? esc(c.plate_no) + " · " : ""}${c.phone ? esc(c.phone) + " · " : ""}limit ${Number(c.credit_limit) > 0 ? fmt.int(c.credit_limit) : "∞"} ETB</p>
+        <span class="tag ${Number(c.balance) > 0 ? "pending" : "approved"}">owes ${fmt.money(c.balance)} ETB</span></div>
+      <div>${Number(c.balance) > 0 ? `<button class="btn btn-blue" data-act="credit-pay" data-id="${esc(c.id)}" data-name="${esc(c.name)}">💵 Payment</button>` : ""}</div>
+      </div>`).join("") : "No credit customers";
+  } catch (e) { loadFailed("loadCustomers", e); }
+}
+
+async function addCustomer() {
+  if (selected === "all") { msg("ccMsg", "Choose a branch above first", "error"); return; }
+  const name = $("ccName").value.trim();
+  if (!name) { msg("ccMsg", "Enter a customer name", "error"); return; }
+  const btn = $("ccBtn"); btn.disabled = true;
+  try {
+    const r = await rpc("admin_add_credit_customer", {
+      p_station_id: selected, p_name: name,
+      p_phone: $("ccPhone").value.trim(), p_plate: $("ccPlate").value.trim(),
+      p_limit: parseFloat($("ccLimit").value) || 0
+    });
+    msg("ccMsg", r.message || (r.success ? "Customer added" : "Failed"), r.success ? "success" : "error");
+    if (r.success) {
+      ["ccName", "ccPhone", "ccPlate"].forEach(i => { $(i).value = ""; });
+      $("ccLimit").value = "0"; loadCustomers();
+    }
+  } catch (e) { msg("ccMsg", "Connection error", "error"); loadFailed("addCustomer", e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- sales ---------- */
+async function loadSales() {
+  try {
+    allSales = await rpc("list_sales", { p_station_id: stationParam(), p_limit: 200 }) || [];
+    renderSales();
+  } catch (e) { loadFailed("loadSales", e); }
+}
+
+function renderSales() {
+  const q = ($("saleSearch").value || "").trim().toLowerCase();
+  let rows = allSales;
+  if (payFilter !== "all") rows = rows.filter(s => (s.payment_method || "").toLowerCase() === payFilter);
+  if (q) rows = rows.filter(s =>
+    (s.staff_name || "").toLowerCase().includes(q) || (s.fuel_type || "").toLowerCase().includes(q));
+
+  $("salesBody").innerHTML = rows.length ? rows.map(s => {
+    const style = s.voided ? ' style="opacity:.4;text-decoration:line-through"' : "";
+    const act = s.voided ? '<span class="tag rejected">void</span>'
+      : `<button class="btn btn-no mini-btn" data-act="void-sale" data-id="${esc(s.id)}">Void</button>`;
+    return `<tr${style}>
+      <td class="mono">${esc(fmt.stamp(s.created_at))}</td>
+      <td>${esc(s.station_name)}</td>
+      <td>${esc(s.staff_name)}</td>
+      <td>${esc(s.fuel_type)}</td>
+      <td class="mono">${esc(s.liters)}</td>
+      <td class="mono">${fmt.money(s.total_etb)}</td>
+      <td>${esc(s.payment_method)} ${act}</td></tr>`;
+  }).join("") : '<tr><td colspan="7" class="empty">No matching sales</td></tr>';
+}
+
+/* ---------- expenses ---------- */
+async function loadExpenses() {
+  try {
+    const rows = await rpc("list_expenses", { p_station_id: stationParam(), p_limit: 100 }) || [];
+    $("expBody").innerHTML = rows.length ? rows.map(e => `<tr>
+      <td class="mono">${esc(fmt.date(e.created_at))}</td>
+      <td>${esc(e.station_name || stationName(e.station_id))}</td>
+      <td>${esc(e.category)}</td><td>${esc(e.description || "")}</td>
+      <td class="mono">${fmt.money(e.amount_etb)}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="empty">No expenses recorded</td></tr>';
+  } catch (e) { loadFailed("loadExpenses", e); }
+}
+
+async function addExpense() {
+  if (selected === "all") { msg("exMsg", "Choose a branch above first", "error"); return; }
+  const cat = $("exCat").value.trim();
+  const amt = parseFloat($("exAmt").value);
+  if (!cat || !(amt > 0)) { msg("exMsg", "Enter a category and a valid amount", "error"); return; }
+  const btn = $("exBtn"); btn.disabled = true;
+  try {
+    const r = await rpc("admin_add_expense", {
+      p_station_id: selected, p_category: cat,
+      p_description: $("exDesc").value.trim(), p_amount: amt
+    });
+    msg("exMsg", r.message || (r.success ? "Expense added" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { ["exCat", "exAmt", "exDesc"].forEach(i => { $(i).value = ""; }); loadExpenses(); }
+  } catch (e) { msg("exMsg", "Connection error", "error"); loadFailed("addExpense", e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- row actions ---------- */
+/* Delegated, with values in data-* attributes. An inline onclick would splice
+   record data straight into JavaScript source, where an apostrophe in a name
+   ends the string early - common in Oromo and Amharic names. */
+function bindRowActions() {
+  document.addEventListener("click", async e => {
+    const el = e.target.closest("[data-act]");
+    if (!el) return;
+    const id = el.getAttribute("data-id");
+    try {
+      switch (el.getAttribute("data-act")) {
+        case "staff-status": {
+          const r = await rpc("admin_set_staff_status", { p_staff_id: id, p_status: el.getAttribute("data-status") });
+          toast(r.message || "Updated", r.success ? "ok" : "err"); loadStaff(); break;
+        }
+        case "credit-pay": {
+          const amt = await promptNumber("Credit payment",
+            `Record a payment from ${el.getAttribute("data-name")}.`, "Amount (ETB)");
+          if (!amt || amt <= 0) return;
+          const r = await rpc("admin_credit_payment", { p_customer_id: id, p_amount: amt });
+          toast(r.message || "Recorded", r.success ? "ok" : "err");
+          if (r.success) { loadCustomers(); loadDashboard(); }
+          break;
+        }
+        case "void-sale": {
+          const ok = await confirmDlg("Void sale",
+            "Void this sale? Tank stock and any credit balance are reversed.", "Void sale");
+          if (!ok) return;
+          const r = await rpc("admin_void_sale", { p_sale_id: id });
+          toast(r.message || "Voided", r.success ? "ok" : "err");
+          if (r.success) { loadSales(); loadDashboard(); }
+          break;
+        }
+      }
+    } catch (err) { toast("Action failed", "err"); loadFailed("rowAction", err); }
+  });
+
+  document.addEventListener("change", async e => {
+    const el = e.target.closest('[data-act="staff-role"], [data-act="staff-station"]');
+    if (!el) return;
+    const id = el.getAttribute("data-id");
+    const isRole = el.getAttribute("data-act") === "staff-role";
+    try {
+      const r = isRole
+        ? await rpc("admin_set_staff_role", { p_staff_id: id, p_role: el.value })
+        : await rpc("admin_set_staff_station", { p_staff_id: id, p_station_id: el.value || null });
+      toast(r.message || "Updated", r.success ? "ok" : "err");
+      loadStaff();
+    } catch (err) { toast("Action failed", "err"); loadFailed("staffChange", err); }
+  });
+}
+
+/* ---------- section switching ---------- */
+function applySelection() {
+  const isAll = selected === "all";
+  const where = isAll ? `All ${stations.length} sites` : stationName(selected);
+
+  $("dashTitle").textContent = isAll ? "Dashboard" : where;
+  $("dashSub").textContent = isAll ? "Every branch at a glance" : "Branch overview";
+  $("allSitesCard").classList.toggle("hidden", !isAll);
+  $("oneSiteCard").classList.toggle("hidden", isAll);
+  ["priceSub", "tankSub", "creditSub", "salesSub", "expSub"].forEach(i => { $(i).textContent = where; });
+
+  renderRail(); renderDashStats();
+  if (isAll) renderStockTable(); else renderOneSite();
+  loadPrices(); loadHistory(); loadTanks(); loadCustomers(); loadSales(); loadExpenses(); renderStaff();
+}
+
+function bind() {
+  $("logoutBtn").addEventListener("click", async () => { await signOut(); location.replace("index.html"); });
+  $("refreshBtn").addEventListener("click", refreshAll);
+  $("priceBtn").addEventListener("click", savePrices);
+  $("dvBtn").addEventListener("click", recordDelivery);
+  $("ccBtn").addEventListener("click", addCustomer);
+  $("exBtn").addEventListener("click", addExpense);
+  $("staffSearch").addEventListener("input", renderStaff);
+  $("saleSearch").addEventListener("input", renderSales);
+
+  $("rail").addEventListener("click", e => {
+    const chip = e.target.closest("[data-site]");
+    if (!chip) return;
+    selected = chip.getAttribute("data-site");
+    applySelection();
+  });
+  $("staffTabs").addEventListener("click", e => {
+    const t = e.target.closest("[data-filter]");
+    if (!t) return;
+    staffFilter = t.getAttribute("data-filter");
+    $("staffTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    renderStaff();
+  });
+  $("payTabs").addEventListener("click", e => {
+    const t = e.target.closest("[data-pay]");
+    if (!t) return;
+    payFilter = t.getAttribute("data-pay");
+    $("payTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    renderSales();
+  });
+  bindRowActions();
+}
+
+function refreshAll() {
+  loadDashboard(); loadTanks(); loadSales(); loadCustomers(); loadExpenses(); loadStaff();
+}
+
+(async function init() {
+  admin = await requireStaff({ admin: true });
+  if (!admin) return;
+
+  $("whoami").textContent = admin.full_name + " · admin";
+  try { stations = await rpc("list_stations") || []; }
+  catch (e) { loadFailed("list_stations", e); }
+
+  $("loading").style.display = "none";
+  $("app").style.display = "block";
+
+  bind();
+  await loadDashboard();
+  applySelection();
+  loadStaff();
+  setInterval(loadDashboard, 60000);
+})();
+</script>
+</body>
+</html>

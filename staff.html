@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="theme-color" content="#0e1520"/>
+<title>MAGPMS — Till</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div id="loading">Loading...</div>
+<div id="app" style="display:none">
+
+<header>
+  <button class="menu-btn" data-menu-toggle aria-label="Menu">☰</button>
+  <div class="brand">⛽ MAGPMS<small id="whoami"></small></div>
+  <div class="h-actions">
+    <button class="theme-btn" id="themeBtn" aria-label="Switch theme">🌙</button>
+    <button class="btn btn-out" id="logoutBtn">Log Out</button>
+  </div>
+</header>
+
+<div id="menuOverlay" data-menu-toggle></div>
+<nav id="sideMenu">
+  <div class="menu-head">
+    <div class="menu-logo">⛽</div>
+    <div><div class="menu-title">MAGPMS</div><div class="menu-sub" id="menuStation">—</div></div>
+  </div>
+  <div class="mi active" data-s="dashboard"><span class="ic">📊</span> My Day</div>
+  <div class="mi" data-s="pos"><span class="ic">💰</span> Sell Fuel</div>
+  <div class="mi" data-s="shift"><span class="ic">🕒</span> Shift</div>
+  <div class="mi" data-s="inventory"><span class="ic">🛢</span> Tanks</div>
+  <div class="mi" data-s="attendance"><span class="ic">✅</span> Attendance</div>
+</nav>
+
+<div class="wrap">
+
+<!-- ===== MY DAY ===== -->
+<div class="section show" id="sec-dashboard">
+  <h1 class="display">My Day</h1>
+  <div class="sub" id="stationLine">—</div>
+  <div class="clock"><div class="d" id="clockDate">—</div><div class="t" id="clockTime">—</div></div>
+
+  <div class="stats">
+    <div class="scard"><div class="em">💰</div><div class="lbl">My Sales</div>
+      <div class="val v-gold" id="mySales">0</div><div class="unit">ETB today</div></div>
+    <div class="scard"><div class="em">⛽</div><div class="lbl">Litres Sold</div>
+      <div class="val v-blue" id="myLiters">0</div><div class="unit">L today</div></div>
+  </div>
+
+  <div class="refresh-line"><span id="updStamp">—</span><button id="refreshBtn">↻ Refresh now</button></div>
+
+  <div class="card">
+    <h2>My Recent Sales</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Time</th><th>Fuel</th><th class="mono">Litres</th><th class="mono">ETB</th><th>Pay</th></tr></thead>
+        <tbody id="myTx"><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SELL ===== -->
+<div class="section" id="sec-pos">
+  <h1 class="display">Sell Fuel</h1><div class="sub">Record a sale at this branch</div>
+  <div class="card">
+    <div class="shift-banner shift-none" id="shiftBanner">Checking shift…</div>
+    <div class="price-chips" id="priceChips"></div>
+
+    <div class="field">
+      <label for="sFuel">Fuel</label>
+      <select id="sFuel"></select>
+    </div>
+
+    <div class="seg">
+      <button id="posModeL" class="active" data-mode="liters">By Litres</button>
+      <button id="posModeA" data-mode="amount">By Amount (ETB)</button>
+    </div>
+
+    <div class="field" id="litersEntry">
+      <label for="sLiters">Litres</label>
+      <input type="number" id="sLiters" step="0.01" min="0" inputmode="decimal"/>
+    </div>
+    <div class="field hidden" id="amountEntry">
+      <label for="sAmount">Amount (ETB)</label>
+      <input type="number" id="sAmount" step="0.01" min="0" inputmode="decimal"/>
+    </div>
+
+    <div class="qbtns" id="quickBtns"></div>
+
+    <div class="field">
+      <label for="sPay">Payment</label>
+      <select id="sPay">
+        <option value="cash">Cash</option>
+        <option value="telebirr">Telebirr</option>
+        <option value="cbe">CBE</option>
+        <option value="credit">Credit</option>
+      </select>
+    </div>
+
+    <div class="field hidden" id="custField">
+      <label for="sCustomer">Credit Customer</label>
+      <select id="sCustomer"></select>
+    </div>
+
+    <div class="field-hint" id="liveTotal">Total: 0.00 ETB</div>
+    <button class="btn btn-gold" id="saleBtn">💵 Record Sale</button>
+    <div class="msg" id="saleMsg"></div>
+  </div>
+</div>
+
+<!-- ===== SHIFT ===== -->
+<div class="section" id="sec-shift">
+  <h1 class="display">Shift</h1><div class="sub">Open and close against the pump meter</div>
+  <div class="card">
+    <div class="shift-banner shift-none" id="shiftBanner2">—</div>
+    <div id="openShiftForm">
+      <div class="field"><label for="openMeter">Opening meter (L)</label>
+        <input type="number" id="openMeter" step="0.01" min="0" inputmode="decimal"/></div>
+      <button class="btn btn-gold" id="openBtn">▶ Open Shift</button>
+    </div>
+    <div id="closeShiftForm" class="hidden">
+      <div class="field"><label for="closeMeter">Closing meter (L)</label>
+        <input type="number" id="closeMeter" step="0.01" min="0" inputmode="decimal"/></div>
+      <button class="btn btn-out" id="closeBtn">⏹ Close Shift</button>
+    </div>
+    <div class="msg" id="shiftMsg"></div>
+  </div>
+</div>
+
+<!-- ===== TANKS ===== -->
+<div class="section" id="sec-inventory">
+  <h1 class="display">Tanks</h1><div class="sub" id="tankSub">This branch</div>
+  <div class="card"><div id="tankList" class="empty">Loading...</div></div>
+</div>
+
+<!-- ===== ATTENDANCE ===== -->
+<div class="section" id="sec-attendance">
+  <h1 class="display">Attendance</h1><div class="sub">Check in and out</div>
+  <div class="card">
+    <div class="shift-banner shift-none" id="attBanner">—</div>
+    <div class="m-actions" style="display:flex;gap:10px">
+      <button class="btn btn-ok" id="inBtn" style="flex:1;padding:12px">✅ Check In</button>
+      <button class="btn btn-no" id="outBtn" style="flex:1;padding:12px">🚪 Check Out</button>
+    </div>
+    <div class="msg" id="attMsg"></div>
+  </div>
+</div>
+
+</div>
+
+<nav class="bottom-nav">
+  <button class="bn-item active" data-s="dashboard"><span class="ic">📊</span>My Day</button>
+  <button class="bn-item" data-s="pos"><span class="ic">💰</span>Sell</button>
+  <button class="bn-item" data-s="shift"><span class="ic">🕒</span>Shift</button>
+  <button class="bn-item" data-s="inventory"><span class="ic">🛢</span>Tanks</button>
+</nav>
+</div>
+
+<script type="module">
+import { rpc, signOut, requireStaff } from "./config.js";
+import { esc, fmt, msg, toast, loadFailed, tankRow, stampUpdated } from "./ui.js";
+
+const $ = id => document.getElementById(id);
+let staff = null;          // the signed-in cashier, from the server
+let prices = {};           // fuel_type -> price
+let posMode = "liters";
+
+/* ---------- prices and the fuel list ---------- */
+/* Both come from the database. A hard-coded pair meant a station could not
+   ring up a fuel it actually sells. */
+async function loadPrices() {
+  try {
+    const rows = await rpc("get_prices");
+    if (!Array.isArray(rows)) return;
+    prices = Object.fromEntries(rows.map(p => [p.fuel_type, Number(p.price_per_liter)]));
+
+    const sel = $("sFuel");
+    const keep = sel.value;
+    sel.innerHTML = rows.map(p => `<option>${esc(p.fuel_type)}</option>`).join("");
+    if (rows.some(p => p.fuel_type === keep)) sel.value = keep;   // survive auto-refresh mid-sale
+
+    $("priceChips").innerHTML = rows.map(p =>
+      `<span class="chip">${esc(p.fuel_type)}: ${fmt.price(p.price_per_liter)} ETB/L</span>`).join("");
+    liveTotal();
+  } catch (e) { loadFailed("loadPrices", e); }
+}
+
+/* ---------- sale entry ---------- */
+const QUICK_LITERS = [5, 10, 20, 50];
+const QUICK_ETB = [200, 500, 1000, 2000];
+
+function renderQuick() {
+  const vals = posMode === "liters" ? QUICK_LITERS : QUICK_ETB;
+  const unit = posMode === "liters" ? "L" : "ETB";
+  $("quickBtns").innerHTML = vals.map(v =>
+    `<button class="qbtn" data-quick="${v}">${v} ${unit}</button>`).join("");
+}
+
+function saleLiters() {
+  const p = prices[$("sFuel").value] || 0;
+  if (posMode === "amount") {
+    const a = parseFloat($("sAmount").value) || 0;
+    return p > 0 ? Math.round((a / p) * 100) / 100 : 0;
+  }
+  return parseFloat($("sLiters").value) || 0;
+}
+
+function liveTotal() {
+  const p = prices[$("sFuel").value] || 0;
+  const l = saleLiters();
+  $("liveTotal").textContent =
+    `Total: ${fmt.money(l * p)} ETB · ${l.toFixed(2)} L @ ${fmt.price(p)}/L`;
+}
+
+function setPosMode(mode) {
+  posMode = mode;
+  document.querySelectorAll(".seg button").forEach(b =>
+    b.classList.toggle("active", b.dataset.mode === mode));
+  $("litersEntry").classList.toggle("hidden", mode !== "liters");
+  $("amountEntry").classList.toggle("hidden", mode !== "amount");
+  renderQuick();
+  liveTotal();
+}
+
+async function submitSale() {
+  const fuel = $("sFuel").value;
+  const liters = saleLiters();
+  const pay = $("sPay").value;
+  const customer = pay === "credit" ? ($("sCustomer").value || null) : null;
+
+  if (!fuel) { msg("saleMsg", "Choose a fuel", "error"); return; }
+  if (!(liters > 0)) { msg("saleMsg", "Enter litres or an amount", "error"); return; }
+  if (pay === "credit" && !customer) { msg("saleMsg", "Choose a credit customer", "error"); return; }
+
+  const btn = $("saleBtn");
+  btn.disabled = true; btn.textContent = "Recording...";
+  try {
+    /* No station or staff id is sent - the database takes both from the
+       signed-in user, so a cashier cannot file a sale against another
+       branch or colleague. */
+    const r = await rpc("record_sale", {
+      p_fuel_type: fuel, p_liters: liters,
+      p_payment: pay, p_credit_customer_id: customer
+    });
+    msg("saleMsg", r.message || (r.success ? "Sale recorded" : "Failed"), r.success ? "success" : "error");
+    if (r.success) {
+      toast("Sale recorded ✔", "ok");
+      $("sLiters").value = ""; $("sAmount").value = "";
+      liveTotal(); loadMyDay(); loadTanks();
+    }
+  } catch (e) {
+    msg("saleMsg", e.message || "Connection error", "error");
+    loadFailed("submitSale", e);
+  } finally {
+    btn.disabled = false; btn.textContent = "💵 Record Sale";
+  }
+}
+
+/* ---------- my day ---------- */
+async function loadMyDay() {
+  try {
+    const rows = await rpc("my_sales_today");
+    const live = Array.isArray(rows) ? rows.filter(s => !s.voided) : [];
+    $("mySales").textContent = fmt.int(live.reduce((a, s) => a + Number(s.total_etb || 0), 0));
+    $("myLiters").textContent = fmt.int(live.reduce((a, s) => a + Number(s.liters || 0), 0));
+    $("myTx").innerHTML = live.length
+      ? live.slice(0, 20).map(s => `<tr>
+          <td class="mono">${esc(fmt.time(s.created_at))}</td>
+          <td>${esc(s.fuel_type)}</td>
+          <td class="mono">${esc(s.liters)}</td>
+          <td class="mono">${fmt.money(s.total_etb)}</td>
+          <td>${esc(s.payment_method)}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="empty">No sales yet today</td></tr>';
+    stampUpdated("updStamp");
+  } catch (e) { loadFailed("loadMyDay", e); }
+}
+
+/* ---------- customers, tanks, shift, attendance ---------- */
+async function loadCustomers() {
+  try {
+    const rows = await rpc("list_credit_customers");
+    const sel = $("sCustomer");
+    sel.innerHTML = Array.isArray(rows) && rows.length
+      ? rows.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.plate_no ? " · " + esc(c.plate_no) : ""} (owes ${fmt.int(c.balance)} ETB)</option>`).join("")
+      : '<option value="">No credit customers at this branch</option>';
+  } catch (e) { loadFailed("loadCustomers", e); }
+}
+
+async function loadTanks() {
+  try {
+    const rows = await rpc("list_tanks");
+    const el = $("tankList");
+    if (!Array.isArray(rows) || rows.length === 0) {
+      el.className = "empty"; el.textContent = "No tanks configured"; return;
+    }
+    el.className = "";
+    el.innerHTML = rows.map(tankRow).join("");
+  } catch (e) { loadFailed("loadTanks", e); }
+}
+
+async function checkShift() {
+  try {
+    const rows = await rpc("my_open_shift");
+    const open = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    [$("shiftBanner"), $("shiftBanner2")].forEach(b => {
+      b.className = "shift-banner " + (open ? "shift-open" : "shift-none");
+      b.textContent = open
+        ? `✔ Shift OPEN since ${fmt.time(open.opened_at)} · opening meter ${open.opening_meter} L`
+        : "⚠ No open shift — open one before recording sales";
+    });
+    $("openShiftForm").classList.toggle("hidden", !!open);
+    $("closeShiftForm").classList.toggle("hidden", !open);
+    $("saleBtn").disabled = !open;
+  } catch (e) { loadFailed("checkShift", e); }
+}
+
+async function shiftAction(fn, inputId, label) {
+  const v = parseFloat($(inputId).value);
+  if (Number.isNaN(v) || v < 0) { msg("shiftMsg", `Enter the ${label} meter reading`, "error"); return; }
+  try {
+    const r = await rpc(fn, fn === "open_shift" ? { p_opening_meter: v } : { p_closing_meter: v });
+    msg("shiftMsg", r.message || (r.success ? "Done" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { $(inputId).value = ""; checkShift(); }
+  } catch (e) { msg("shiftMsg", "Connection error", "error"); loadFailed(fn, e); }
+}
+
+async function attStatus() {
+  try {
+    const rows = await rpc("my_attendance_status");
+    const a = Array.isArray(rows) && rows.length ? rows[0] : null;
+    const inNow = a && !a.check_out;
+    $("attBanner").className = "shift-banner " + (inNow ? "shift-open" : "shift-none");
+    $("attBanner").textContent = inNow
+      ? `✔ Checked in at ${fmt.time(a.check_in)}`
+      : "Not checked in";
+    $("inBtn").disabled = !!inNow;
+    $("outBtn").disabled = !inNow;
+  } catch (e) { loadFailed("attStatus", e); }
+}
+
+async function attAction(fn) {
+  try {
+    const r = await rpc(fn);
+    msg("attMsg", r.message || (r.success ? "Done" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { toast(fn === "check_in" ? "Checked in ✔" : "Checked out", "ok"); attStatus(); }
+  } catch (e) { msg("attMsg", "Connection error", "error"); loadFailed(fn, e); }
+}
+
+/* ---------- wiring ---------- */
+function bind() {
+  $("logoutBtn").addEventListener("click", async () => { await signOut(); location.replace("index.html"); });
+  $("refreshBtn").addEventListener("click", refreshAll);
+  $("saleBtn").addEventListener("click", submitSale);
+  $("openBtn").addEventListener("click", () => shiftAction("open_shift", "openMeter", "opening"));
+  $("closeBtn").addEventListener("click", () => shiftAction("close_shift", "closeMeter", "closing"));
+  $("inBtn").addEventListener("click", () => attAction("check_in"));
+  $("outBtn").addEventListener("click", () => attAction("check_out"));
+  $("sFuel").addEventListener("change", liveTotal);
+  $("sPay").addEventListener("change", () =>
+    $("custField").classList.toggle("hidden", $("sPay").value !== "credit"));
+
+  document.querySelectorAll(".seg button").forEach(b =>
+    b.addEventListener("click", () => setPosMode(b.dataset.mode)));
+
+  document.addEventListener("input", e => {
+    if (e.target.id === "sLiters" || e.target.id === "sAmount") liveTotal();
+  });
+  document.addEventListener("click", e => {
+    const q = e.target.closest("[data-quick]");
+    if (!q) return;
+    $(posMode === "liters" ? "sLiters" : "sAmount").value = q.getAttribute("data-quick");
+    liveTotal();
+  });
+}
+
+function refreshAll() { loadMyDay(); loadPrices(); loadTanks(); checkShift(); attStatus(); }
+
+(async function init() {
+  staff = await requireStaff();
+  if (!staff) return;
+
+  $("whoami").textContent = `${staff.full_name} · ${staff.role}`;
+  const where = staff.station_name || "No branch assigned";
+  $("stationLine").textContent = where;
+  $("menuStation").textContent = where;
+  $("tankSub").textContent = where;
+
+  $("loading").style.display = "none";
+  $("app").style.display = "block";
+
+  bind();
+  setPosMode("liters");
+  refreshAll();
+  loadCustomers();
+  setInterval(refreshAll, 60000);
+})();
+</script>
+</body>
+</html>
