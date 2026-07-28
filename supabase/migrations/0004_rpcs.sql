@@ -1,24 +1,86 @@
--- 0004 — the RPC contract the pages call
+-- 0004 — the functions the pages call
 --
 -- Two rules hold everywhere below:
 --
 --   1. No function takes the caller's id. Identity comes from current_staff().
---      The old app sent p_admin_id / p_staff_id from localStorage, so any
---      client could act as any user - and a cashier could file a shift or a
---      sale against a colleague.
+--      The old signatures all led with one - record_sale_v2(uuid, ...),
+--      open_shift(uuid, numeric), admin_set_price(uuid, ...) - read from
+--      localStorage by the client. Any caller could send any id, so the
+--      database had no way to know who was acting. That is what this removes.
 --
 --   2. p_station_id is a FILTER, never a grant. An admin may narrow to one
 --      branch; everyone else is pinned to their own whatever they pass.
+--
+-- The old functions are dropped by signature at the end, once the new ones
+-- exist, so nothing is left callable that still trusts a client-supplied id.
 
 begin;
 
--- Reusable scope test: true when the caller may see this station's rows.
-create or replace function can_see_station(p_station uuid)
-returns boolean
-language sql stable security definer set search_path = public
-as $$ select is_admin() or p_station = current_station(); $$;
+-- ---------------------------------------------------------------
+-- fail fast if the column names differ from what these functions use
+-- ---------------------------------------------------------------
+do $$
+declare
+  missing text := '';
+  procedure_note text := 'adjust the function bodies below to match, then re-run';
+begin
+  if not exists (select 1 from information_schema.columns
+                  where table_schema='public' and table_name='fuel_prices'
+                    and column_name='price_per_liter') then
+    missing := missing || E'\n  fuel_prices.price_per_liter';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_schema='public' and table_name='tanks'
+                    and column_name='current_liters') then
+    missing := missing || E'\n  tanks.current_liters';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_schema='public' and table_name='sales'
+                    and column_name='total_etb') then
+    missing := missing || E'\n  sales.total_etb';
+  end if;
 
--- ---------- reference ----------
+  if missing <> '' then
+    raise exception E'These columns are not what 0004 expects:%s\n\n%s\n\nList the real ones with:\n  select table_name, column_name from information_schema.columns\n  where table_schema=''public'' and table_name in (''fuel_prices'',''tanks'',''sales'')\n  order by table_name, ordinal_position;',
+      missing, procedure_note;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------
+-- reference
+-- ---------------------------------------------------------------
+create or replace function me()
+returns table (id uuid, full_name text, email text, phone text,
+               role text, status text, station_id uuid, station_name text)
+language sql stable security definer set search_path = public
+as $$
+  select s.id, s.full_name, s.email, s.phone, s.role, s.status,
+         s.station_id, st.name
+  from current_staff() s
+  left join stations st on st.id = s.station_id;
+$$;
+
+create or replace function register_staff(p_full_name text, p_phone text default null)
+returns json
+language plpgsql security definer set search_path = public
+as $$
+declare v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    return json_build_object('success', false, 'message', 'not authenticated');
+  end if;
+  if exists (select 1 from staff where auth_user_id = v_uid) then
+    return json_build_object('success', false, 'message', 'account already registered');
+  end if;
+
+  insert into staff (auth_user_id, full_name, phone, email, role, status)
+  values (v_uid, p_full_name, p_phone,
+          (select email from auth.users where id = v_uid), 'operator', 'pending');
+
+  return json_build_object('success', true, 'message', 'awaiting admin approval');
+end;
+$$;
+
 create or replace function list_stations()
 returns table (id uuid, name text, town text)
 language sql stable security definer set search_path = public
@@ -28,9 +90,9 @@ as $$
   order by s.name;
 $$;
 
--- ---------- dashboard ----------
--- One row per branch, so the admin rail is a single call rather than one per
--- site. Staff get exactly their own row from the same function.
+-- ---------------------------------------------------------------
+-- dashboard: one row per branch, one call for the whole rail
+-- ---------------------------------------------------------------
 create or replace function admin_dashboard()
 returns table (
   station_id uuid, station_name text, town text,
@@ -42,10 +104,10 @@ language sql stable security definer set search_path = public
 as $$
   select st.id, st.name, st.town,
     coalesce((select sum(s.total_etb) from sales s
-              where s.station_id = st.id and not s.voided
+              where s.station_id = st.id and not coalesce(s.voided,false)
                 and s.created_at >= date_trunc('day', now())), 0),
     coalesce((select sum(s.liters) from sales s
-              where s.station_id = st.id and not s.voided
+              where s.station_id = st.id and not coalesce(s.voided,false)
                 and s.created_at >= date_trunc('day', now())), 0),
     coalesce((select sum(t.current_liters)  from tanks t where t.station_id = st.id), 0),
     coalesce((select sum(t.capacity_liters) from tanks t where t.station_id = st.id), 0),
@@ -53,28 +115,31 @@ as $$
     coalesce((select count(*)::int from attendance a
               where a.station_id = st.id and a.check_out is null), 0),
     coalesce((select count(*)::int from tanks t
-              where t.station_id = st.id
-                and t.capacity_liters > 0
+              where t.station_id = st.id and t.capacity_liters > 0
                 and (t.current_liters / t.capacity_liters) < 0.30), 0)
   from stations st
   where is_admin() or st.id = current_station()
   order by st.name;
 $$;
 
--- ---------- reads, scoped ----------
+-- ---------------------------------------------------------------
+-- scoped reads
+-- ---------------------------------------------------------------
 create or replace function get_prices(p_station_id uuid default null)
 returns table (fuel_type text, price_per_liter numeric)
 language sql stable security definer set search_path = public
 as $$
   select p.fuel_type, p.price_per_liter
-  from prices p
+  from fuel_prices p
   where p.station_id = case when is_admin() then coalesce(p_station_id, p.station_id)
-                           else current_station() end
+                            else current_station() end
   order by p.fuel_type;
 $$;
 
+-- tanks.id is integer here, not uuid - the old admin_record_delivery took
+-- (uuid, int, numeric, text), which is what gives that away.
 create or replace function list_tanks(p_station_id uuid default null)
-returns table (id uuid, station_id uuid, tank_name text, fuel_type text,
+returns table (id int, station_id uuid, tank_name text, fuel_type text,
                current_liters numeric, capacity_liters numeric)
 language sql stable security definer set search_path = public
 as $$
@@ -92,7 +157,7 @@ returns table (id uuid, station_id uuid, station_name text, staff_name text,
 language sql stable security definer set search_path = public
 as $$
   select s.id, s.station_id, st.name, stf.full_name, s.fuel_type, s.liters,
-         s.total_etb, s.payment_method, s.voided, s.created_at
+         s.total_etb, s.payment_method, coalesce(s.voided,false), s.created_at
   from sales s
   join stations st on st.id = s.station_id
   left join staff stf on stf.id = s.staff_id
@@ -142,13 +207,16 @@ as $$
   order by h.changed_at;
 $$;
 
--- ---------- the caller's own rows ----------
+-- ---------------------------------------------------------------
+-- the caller's own rows
+-- ---------------------------------------------------------------
 create or replace function my_sales_today()
 returns table (id uuid, fuel_type text, liters numeric, total_etb numeric,
                payment_method text, voided boolean, created_at timestamptz)
 language sql stable security definer set search_path = public
 as $$
-  select s.id, s.fuel_type, s.liters, s.total_etb, s.payment_method, s.voided, s.created_at
+  select s.id, s.fuel_type, s.liters, s.total_etb, s.payment_method,
+         coalesce(s.voided,false), s.created_at
   from sales s
   where s.staff_id = (select id from current_staff())
     and s.created_at >= date_trunc('day', now())
@@ -175,7 +243,9 @@ as $$
   order by a.check_in desc limit 1;
 $$;
 
--- ---------- staff writes ----------
+-- ---------------------------------------------------------------
+-- staff writes
+-- ---------------------------------------------------------------
 create or replace function record_sale(
   p_fuel_type text, p_liters numeric, p_payment text,
   p_credit_customer_id uuid default null)
@@ -186,7 +256,7 @@ declare
   v_staff staff := current_staff();
   v_station uuid;
   v_price numeric;
-  v_tank uuid;
+  v_tank int;
 begin
   if v_staff.id is null or v_staff.status <> 'approved' then
     return json_build_object('success', false, 'message', 'not authorised');
@@ -203,12 +273,12 @@ begin
   end if;
 
   select price_per_liter into v_price
-  from prices where station_id = v_station and fuel_type = p_fuel_type;
+  from fuel_prices where station_id = v_station and fuel_type = p_fuel_type;
   if v_price is null then
     return json_build_object('success', false, 'message', 'no price set for ' || p_fuel_type);
   end if;
 
-  -- Credit customers belong to one branch.
+  -- credit customers belong to one branch
   if p_payment = 'credit' then
     if p_credit_customer_id is null then
       return json_build_object('success', false, 'message', 'choose a credit customer');
@@ -230,9 +300,9 @@ begin
   end if;
 
   insert into sales (station_id, staff_id, fuel_type, liters, total_etb,
-                     payment_method, credit_customer_id, price_per_liter)
+                     payment_method, credit_customer_id)
   values (v_station, v_staff.id, p_fuel_type, p_liters, round(p_liters * v_price, 2),
-          p_payment, p_credit_customer_id, v_price);
+          p_payment, p_credit_customer_id);
 
   update tanks set current_liters = current_liters - p_liters where id = v_tank;
 
@@ -246,9 +316,7 @@ end;
 $$;
 
 create or replace function open_shift(p_opening_meter numeric)
-returns json
-language plpgsql security definer set search_path = public
-as $$
+returns json language plpgsql security definer set search_path = public as $$
 declare v_staff staff := current_staff();
 begin
   if v_staff.id is null then return json_build_object('success', false, 'message', 'not authorised'); end if;
@@ -258,13 +326,10 @@ begin
   insert into shifts (station_id, staff_id, opening_meter, opened_at)
   values (v_staff.station_id, v_staff.id, p_opening_meter, now());
   return json_build_object('success', true, 'message', 'shift opened');
-end;
-$$;
+end; $$;
 
 create or replace function close_shift(p_closing_meter numeric)
-returns json
-language plpgsql security definer set search_path = public
-as $$
+returns json language plpgsql security definer set search_path = public as $$
 declare v_staff staff := current_staff(); v_id uuid;
 begin
   select id into v_id from shifts
@@ -272,13 +337,10 @@ begin
   if v_id is null then return json_build_object('success', false, 'message', 'no open shift'); end if;
   update shifts set closing_meter = p_closing_meter, closed_at = now() where id = v_id;
   return json_build_object('success', true, 'message', 'shift closed');
-end;
-$$;
+end; $$;
 
 create or replace function check_in()
-returns json
-language plpgsql security definer set search_path = public
-as $$
+returns json language plpgsql security definer set search_path = public as $$
 declare v_staff staff := current_staff();
 begin
   if v_staff.id is null then return json_build_object('success', false, 'message', 'not authorised'); end if;
@@ -288,13 +350,10 @@ begin
   insert into attendance (station_id, staff_id, check_in)
   values (v_staff.station_id, v_staff.id, now());
   return json_build_object('success', true, 'message', 'checked in');
-end;
-$$;
+end; $$;
 
 create or replace function check_out()
-returns json
-language plpgsql security definer set search_path = public
-as $$
+returns json language plpgsql security definer set search_path = public as $$
 declare v_staff staff := current_staff(); v_id uuid;
 begin
   select id into v_id from attendance
@@ -302,35 +361,32 @@ begin
   if v_id is null then return json_build_object('success', false, 'message', 'not checked in'); end if;
   update attendance set check_out = now() where id = v_id;
   return json_build_object('success', true, 'message', 'checked out');
-end;
-$$;
+end; $$;
 
--- ---------- admin writes ----------
+-- ---------------------------------------------------------------
+-- admin writes
+-- ---------------------------------------------------------------
 create or replace function admin_set_price(p_station_id uuid, p_fuel_type text, p_price numeric)
-returns json
-language plpgsql security definer set search_path = public
-as $$
+returns json language plpgsql security definer set search_path = public as $$
 declare v_admin staff := current_staff(); v_old numeric;
 begin
   if not is_admin() then return json_build_object('success', false, 'message', 'not authorised'); end if;
   if not (p_price > 0) then return json_build_object('success', false, 'message', 'price must be positive'); end if;
 
   select price_per_liter into v_old
-  from prices where station_id = p_station_id and fuel_type = p_fuel_type;
+  from fuel_prices where station_id = p_station_id and fuel_type = p_fuel_type;
 
-  insert into prices (station_id, fuel_type, price_per_liter)
+  insert into fuel_prices (station_id, fuel_type, price_per_liter)
   values (p_station_id, p_fuel_type, p_price)
   on conflict (station_id, fuel_type)
   do update set price_per_liter = excluded.price_per_liter;
 
-  -- The price and its history are written together, so the trail cannot
-  -- silently miss a change.
+  -- price and history are written together, so the trail cannot miss a change
   insert into price_history (station_id, fuel_type, old_price, new_price, changed_by)
   values (p_station_id, p_fuel_type, v_old, p_price, v_admin.id);
 
   return json_build_object('success', true, 'message', 'price updated');
-end;
-$$;
+end; $$;
 
 create or replace function admin_list_staff()
 returns table (id uuid, full_name text, email text, phone text, role text,
@@ -338,8 +394,7 @@ returns table (id uuid, full_name text, email text, phone text, role text,
 language sql stable security definer set search_path = public
 as $$
   select s.id, s.full_name, s.email, s.phone, s.role, s.status, s.station_id
-  from staff s
-  where is_admin()
+  from staff s where is_admin()
   order by s.status, s.full_name;
 $$;
 
@@ -361,7 +416,7 @@ begin
   if p_role not in ('operator','accountant','manager','admin') then
     return json_build_object('success', false, 'message', 'unknown role');
   end if;
-  -- Never leave the group with no admin.
+  -- never leave the group with no admin
   if p_role <> 'admin'
      and (select role from staff where id = p_staff_id) = 'admin'
      and (select count(*) from staff where role = 'admin' and status = 'approved') <= 1 then
@@ -379,7 +434,7 @@ begin
   return json_build_object('success', true, 'message', 'branch assigned');
 end; $$;
 
-create or replace function admin_record_delivery(p_tank_id uuid, p_liters numeric)
+create or replace function admin_record_delivery(p_tank_id int, p_liters numeric)
 returns json language plpgsql security definer set search_path = public as $$
 begin
   if not is_admin() then return json_build_object('success', false, 'message', 'not authorised'); end if;
@@ -423,20 +478,22 @@ end; $$;
 
 create or replace function admin_void_sale(p_sale_id uuid)
 returns json language plpgsql security definer set search_path = public as $$
-declare s sales;
+declare s sales; v_tank int;
 begin
   if not is_admin() then return json_build_object('success', false, 'message', 'not authorised'); end if;
   select * into s from sales where id = p_sale_id;
   if s.id is null then return json_build_object('success', false, 'message', 'sale not found'); end if;
-  if s.voided then return json_build_object('success', false, 'message', 'already voided'); end if;
+  if coalesce(s.voided,false) then return json_build_object('success', false, 'message', 'already voided'); end if;
 
   update sales set voided = true where id = p_sale_id;
 
-  -- Put the fuel back and reverse any credit.
-  update tanks set current_liters = current_liters + s.liters
+  -- put the fuel back into the emptiest matching tank at that branch
+  select id into v_tank from tanks
   where station_id = s.station_id and fuel_type = s.fuel_type
-    and id = (select id from tanks where station_id = s.station_id
-              and fuel_type = s.fuel_type order by current_liters limit 1);
+  order by current_liters limit 1;
+  if v_tank is not null then
+    update tanks set current_liters = current_liters + s.liters where id = v_tank;
+  end if;
 
   if s.payment_method = 'credit' and s.credit_customer_id is not null then
     update credit_customers set balance = greatest(0, balance - s.total_etb)
@@ -447,3 +504,35 @@ begin
 end; $$;
 
 commit;
+
+-- ---------------------------------------------------------------
+-- retire the old signatures
+-- ---------------------------------------------------------------
+-- Every one of these takes a caller id as its first argument. Leaving them
+-- callable would leave the original hole open beside the fix.
+drop function if exists login_staff(text,text);
+drop function if exists login_admin(text,text);
+drop function if exists create_first_admin(text,text,text);
+drop function if exists register_staff(text,text,text,text);
+drop function if exists admin_list_staff(text);
+drop function if exists admin_set_staff_status(uuid,uuid,text);
+drop function if exists admin_set_staff_role(uuid,uuid,text);
+drop function if exists record_sale(uuid,text,numeric,numeric,text);
+drop function if exists record_sale_v2(uuid,text,numeric,text,uuid);
+drop function if exists list_sales(uuid,int);
+drop function if exists list_tanks();
+drop function if exists get_prices();
+drop function if exists admin_set_price(uuid,text,numeric);
+drop function if exists open_shift(uuid,numeric);
+drop function if exists close_shift(uuid,numeric);
+drop function if exists my_open_shift(uuid);
+drop function if exists admin_record_delivery(uuid,int,numeric,text);
+drop function if exists admin_add_credit_customer(uuid,text,text,text,numeric);
+drop function if exists list_credit_customers();
+drop function if exists admin_credit_payment(uuid,uuid,numeric);
+drop function if exists admin_add_expense(uuid,text,text,numeric);
+drop function if exists list_expenses(int);
+drop function if exists admin_void_sale(uuid,uuid);
+drop function if exists check_in(uuid);
+drop function if exists check_out(uuid);
+drop function if exists my_attendance_status(uuid);
