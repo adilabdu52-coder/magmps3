@@ -40,6 +40,7 @@ of functions, and none of them take a caller id.
 0005_lockdown.sql        RLS on, direct table access revoked
 0006_delivery_history.sql deliveries recorded, not just applied to the tank
 0007_shifts_reports.sql  shift/attendance oversight and the sales report
+0008_local_day.sql       "today" means today in Ethiopia, not in UTC
 ```
 
 Run them in order. **`0005` is not optional** — without it the publishable key
@@ -56,9 +57,49 @@ in `public`, `anon` and `authenticated` hold no direct table grants, prices are
 set per branch and deliveries write to their own trail. The old `admins` table
 was folded into `staff` by `0001` and has since been dropped.
 
-`0007` is new and has not been run yet. The Shifts and Reports sections of
-`admin.html` call `list_shifts`, `list_attendance` and `report_sales`, so both
-show a load failure until it is applied.
+`0007` has been applied too, so the Shifts and Reports sections work.
+
+`0008` has not been run yet. Nothing breaks without it — it corrects what
+"today" means, described below.
+
+### "Today" ends at local midnight
+
+`date_trunc('day', now())` is midnight **UTC**, which is 3am in Ethiopia. Until
+`0008` is applied, every morning between local midnight and 3am:
+
+- the dashboard's "Sales today" tile still shows yesterday's takings, and adds
+  this morning's onto them
+- a cashier on the early shift sees nothing of their own work in "My Day"
+
+`0008` moves the boundary to local midnight and puts the timezone in one place
+(`app_timezone()`) instead of a string repeated in each function. Stored data is
+untouched: `created_at` stays `timestamptz` in UTC, as it should be. Only the
+boundary used to read it back moves.
+
+## Testing the database contract
+
+`supabase/tests/` rebuilds the post-migration schema on a throwaway Postgres and
+runs the migrations against it, so a migration can be checked before it touches
+the real database:
+
+```sh
+initdb -D /tmp/pgd && pg_ctl -D /tmp/pgd -o '-k /tmp -p 5439' start
+psql -h /tmp -p 5439 -d postgres -c 'create role anon' -c 'create role authenticated'
+createdb -h /tmp -p 5439 t
+psql -h /tmp -p 5439 -d t -v ON_ERROR_STOP=1 -f supabase/tests/fixture.sql
+psql -h /tmp -p 5439 -d t -v ON_ERROR_STOP=1 -f supabase/migrations/0007_shifts_reports.sql
+psql -h /tmp -p 5439 -d t -v ON_ERROR_STOP=1 -f supabase/migrations/0008_local_day.sql
+psql -h /tmp -p 5439 -d t -f supabase/tests/checks.sql
+```
+
+Every line should read `PASS`. The checks cover shift variance, report totals,
+the local-midnight boundary, and — the ones worth keeping — that
+`p_station_id` stays a filter and never a grant, and that a caller with no
+session gets nothing.
+
+The fixture is a hand-written copy of the live schema, not a dump. If a column
+is ever added or renamed for real, it has to be added here too or these checks
+will pass against a schema that no longer exists.
 
 ## Why identity works this way
 
@@ -107,18 +148,28 @@ Verified in a real browser against a stubbed backend:
   next visit instead of showing a dead panel
 - no console errors on any page
 
+Verified on a throwaway Postgres 16, against the fixture in `supabase/tests/`:
+
+- `0007` and `0008` apply cleanly, and again on a second run
+- shift variance, including the blank for a shift still open
+- attendance hours, counting up to now for an open check-in
+- the local-midnight boundary: a sale at 00:01 local is dropped by the old UTC
+  boundary and kept by the new one, and the dashboard tile and report agree
+- voided sales excluded from both the tile and the report
+- `p_station_id` is a filter, never a grant — an operator passing another
+  branch's id gets their own branch back
+- a caller with no session gets nothing from any of the new functions
+
 Verified against the real database, by hand:
 
-- all of `0001`–`0006` applied in order
+- all of `0001`–`0007` applied in order
 - RLS on for every table; no direct grants to `anon` or `authenticated`
 - sign-in, the admin dashboard, per-branch prices and delivery recording
 
 Not verified:
 
-- `0007` has not been run
-- the sales report against real trade — the day boundary is Ethiopian local
-  time, which `admin_dashboard`'s "sales today" tile does not yet use, so the
-  two can disagree between midnight and 03:00
+- `0008` has not been run against the real database
+- the report against a real month of trade
 - the Auth migration for the remaining staff (each needs an `auth.users` row
   and a branch before they can sign in)
 
