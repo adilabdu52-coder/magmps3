@@ -129,6 +129,11 @@ Fuels are read from the database, never hard-coded. The old app had `Diesel` and
 `Petrol` written into the markup in three places, so a station could not price —
 or even ring up — anything else. Renaming a fuel is now an `UPDATE`.
 
+CI enforces that. `check.mjs` fails the build if a fuel name reappears in an
+`<option>`, a `value=`/`data-fuel=` attribute, or a quoted string in a page —
+the three shapes the original bug took. Prose may still name a fuel; only the
+places that would define a control count.
+
 Every change is appended to `price_history` in the same transaction that
 updates the price, so the trail cannot miss one. Rows are never edited: a wrong
 price is corrected by a new row.
