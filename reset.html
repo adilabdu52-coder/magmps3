@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover"/>
+<meta name="theme-color" content="#0e1520"/>
+<meta name="robots" content="noindex"/>
+<title>MAGPMS — New password</title>
+<link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<button class="theme-btn login-theme" id="themeBtn" aria-label="Switch theme">🌙</button>
+
+<div id="loginPage">
+  <div class="login-wrap">
+    <div class="login-brand">
+      <div class="logo-ring">⛽</div>
+      <h1>MAGPMS</h1>
+      <p>Choose a new password</p>
+    </div>
+
+    <div class="login-card" id="checking">
+      <div class="msg">Checking your link…</div>
+    </div>
+
+    <form class="login-card hidden" id="resetCard" autocomplete="on">
+      <div class="field">
+        <label for="rsPass">New password (min 8)</label>
+        <input type="password" id="rsPass" autocomplete="new-password" minlength="8" required/>
+      </div>
+      <div class="field">
+        <label for="rsPass2">Repeat it</label>
+        <input type="password" id="rsPass2" autocomplete="new-password" minlength="8" required/>
+      </div>
+      <button class="btn btn-gold" id="rsBtn" type="submit">🔑 Set Password</button>
+      <div class="msg" id="rsMsg"></div>
+    </form>
+
+    <div class="login-card hidden" id="badLink">
+      <div class="msg error" id="badMsg">This link is not valid any more.</div>
+      <div class="field-hint">Reset links expire after about an hour and work once only.
+        Ask for a new one from the sign-in page.</div>
+      <div class="switch-link"><a href="index.html">Back to sign in</a></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { supabase } from "./config.js";
+import { msg, toast } from "./ui.js";
+
+const $ = id => document.getElementById(id);
+const show = which =>
+  ["checking", "resetCard", "badLink"].forEach(id => $(id).classList.toggle("hidden", id !== which));
+
+const bad = text => { $("badMsg").textContent = text; show("badLink"); };
+
+/* Supabase has shipped three shapes of recovery link, and which one a project
+   sends depends on when its email templates were last touched. Rather than
+   guess at yours, handle all three:
+
+     #access_token=...              implicit - the client parses it on load
+     ?token_hash=...&type=recovery  the current default
+     ?code=...                      PKCE
+
+   All three end in the same place: a session exists, so updateUser can run. */
+async function establishSession() {
+  const q = new URL(location.href).searchParams;
+  const hash = new URLSearchParams(location.hash.slice(1));
+
+  // An expired or already-used link comes back as an error, not as nothing.
+  const err = hash.get("error_description") || q.get("error_description") ||
+              hash.get("error") || q.get("error");
+  if (err) throw new Error(err.replace(/\+/g, " "));
+
+  const tokenHash = q.get("token_hash");
+  if (tokenHash) {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash: tokenHash, type: q.get("type") || "recovery"
+    });
+    if (error) throw new Error(error.message);
+    return true;
+  }
+
+  const code = q.get("code");
+  if (code) {
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (error) throw new Error(error.message);
+    return true;
+  }
+
+  /* Implicit flow. The client reads the fragment itself, but does it
+     asynchronously, so poll briefly rather than assume it has finished.
+     This also covers someone already signed in opening the page directly to
+     change their password, which is a reasonable thing to allow. */
+  for (let i = 0; i < 20; i++) {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) return true;
+    await new Promise(r => setTimeout(r, 150));
+  }
+  return false;
+}
+
+(async function init() {
+  try {
+    if (await establishSession()) show("resetCard");
+    else bad("This link is not valid any more, or it was opened in a different browser.");
+  } catch (e) {
+    bad("That link did not work: " + e.message);
+  }
+  /* Take the token out of the address bar once it has been used - it should
+     not sit in browser history or stay readable over someone's shoulder. */
+  history.replaceState(null, "", location.pathname);
+})();
+
+$("resetCard").addEventListener("submit", async e => {
+  e.preventDefault();
+  const p1 = $("rsPass").value, p2 = $("rsPass2").value;
+  if (p1.length < 8) { msg("rsMsg", "Password must be at least 8 characters", "error"); return; }
+  if (p1 !== p2) { msg("rsMsg", "The two passwords do not match", "error"); return; }
+
+  const btn = $("rsBtn");
+  btn.disabled = true; btn.textContent = "Saving...";
+  try {
+    const { error } = await supabase.auth.updateUser({ password: p1 });
+    if (error) throw new Error(error.message);
+
+    msg("rsMsg", "Password changed. Taking you to sign in…", "success");
+    toast("Password changed ✔", "ok");
+    /* Sign out rather than ride the recovery session into the app. The next
+       screen is then a real sign-in, which proves the new password works
+       while the person is still sitting here to find out. */
+    await supabase.auth.signOut();
+    setTimeout(() => location.replace("index.html"), 900);
+  } catch (err) {
+    msg("rsMsg", err.message || "Could not change the password", "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "🔑 Set Password";
+  }
+});
+</script>
+</body>
+</html>
