@@ -18,10 +18,12 @@ No build step. The pages are served as-is; the only dependency is
 ```
 index.html    sign in / sign up
 staff.html    till — sell, shift, tanks, attendance (one branch)
-admin.html    all branches — dashboard, prices + history, staff, credit, sales, expenses
+admin.html    all branches — dashboard, prices + history, staff, shifts,
+              tanks + deliveries, credit, sales, expenses, reports
 config.js     Supabase client, rpc() helper, session guard
 ui.js         shared runtime: theme, nav, toasts, dialogs, tank rendering
 styles.css    design system
+render.yaml   optional Render deployment (Pages is unaffected)
 supabase/migrations/   the database this app expects
 ```
 
@@ -31,31 +33,32 @@ supabase/migrations/   the database this app expects
 of functions, and none of them take a caller id.
 
 ```
-0001_identity.sql      link staff to Supabase Auth; current_staff(), is_admin()
-0002_stations.sql      stations table, station_id everywhere, tank seeding
-0003_price_history.sql append-only price trail
-0004_rpcs.sql          every function the pages call
-0005_lockdown.sql      RLS on, direct table access revoked
+0001_identity.sql        link staff to Supabase Auth; current_staff(), is_admin()
+0002_stations.sql        stations table, station_id everywhere, tank seeding
+0003_price_history.sql   append-only price trail
+0004_rpcs.sql            every function the pages call
+0005_lockdown.sql        RLS on, direct table access revoked
+0006_delivery_history.sql deliveries recorded, not just applied to the tank
+0007_shifts_reports.sql  shift/attendance oversight and the sales report
 ```
 
 Run them in order. **`0005` is not optional** — without it the publishable key
 in `config.js` can read every table directly, and the functions become
 decoration.
 
-### These migrations are written against an inferred schema
+Each one is idempotent: existence is checked before every alter, and re-running
+a migration is a no-op rather than an error.
 
-They were derived from what the previous frontend read back — `staff.full_name`,
-`sales.total_etb`, `tanks.current_liters`, and so on. Nobody has checked them
-against the real database. Dump it and reconcile before running:
+### Status
 
-```sql
-SELECT table_name, column_name, data_type
-FROM information_schema.columns
-WHERE table_schema = 'public'
-ORDER BY table_name, ordinal_position;
-```
+`0001`–`0006` have been applied to the live database. RLS is on for every table
+in `public`, `anon` and `authenticated` hold no direct table grants, prices are
+set per branch and deliveries write to their own trail. The old `admins` table
+was folded into `staff` by `0001` and has since been dropped.
 
-Every line marked `⚠` is a place where a name was guessed.
+`0007` is new and has not been run yet. The Shifts and Reports sections of
+`admin.html` call `list_shifts`, `list_attendance` and `report_sales`, so both
+show a load failure until it is applied.
 
 ## Why identity works this way
 
@@ -97,18 +100,41 @@ Verified in a real browser against a stubbed backend:
 - price fields rendered from the database, history chart and change log
 - the till scoped to one branch, with live pricing
 - the role guard — an operator opening `admin.html` lands on `staff.html`
+- shift variance: sign, colour, and a blank for a shift still open
+- report totals, trading-day count, and the CSV — including that a branch name
+  beginning with `=` is written as text rather than a live formula
+- sections fetch only when opened, and a section that failed retries on the
+  next visit instead of showing a dead panel
 - no console errors on any page
 
-Not verified, because it needs the real database:
+Verified against the real database, by hand:
 
-- that the migrations run at all against the actual schema
-- every RPC's behaviour end to end
-- the Auth migration for existing staff (each needs an `auth.users` row before
-  they can sign in)
+- all of `0001`–`0006` applied in order
+- RLS on for every table; no direct grants to `anon` or `authenticated`
+- sign-in, the admin dashboard, per-branch prices and delivery recording
+
+Not verified:
+
+- `0007` has not been run
+- the sales report against real trade — the day boundary is Ethiopian local
+  time, which `admin_dashboard`'s "sales today" tile does not yet use, so the
+  two can disagree between midnight and 03:00
+- the Auth migration for the remaining staff (each needs an `auth.users` row
+  and a branch before they can sign in)
 
 ## Deployment
 
-Static hosting. For GitHub Pages: Settings → Pages → deploy from `main`.
+Static hosting, no build step.
+
+**GitHub Pages** is the live deployment: Settings → Pages → deploy from `main`.
+
+**Render** is optional and additive. `render.yaml` describes the same site as a
+Render blueprint; connecting the repo there gives a second URL and nothing about
+Pages changes. The reason to bother is response headers, which Pages cannot
+send — `render.yaml` sets a CSP that pins `connect-src` to this Supabase project,
+so injected code cannot ship a session or a branch's sales elsewhere. Read the
+comments in that file before trusting it further than that: the inline module
+blocks still require `'unsafe-inline'` for scripts.
 
 Do not add a debug or diagnostic page that calls the RPCs without a session —
 the previous repo shipped one, and it exposed staff records, sales history and

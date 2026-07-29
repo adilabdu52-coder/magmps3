@@ -1,0 +1,61 @@
+# Optional second home for the same static site.
+#
+# GitHub Pages is still the live deployment and nothing here changes it. This
+# only exists so the site can also be served from Render: connect the repo at
+# https://dashboard.render.com/blueprints and Render reads this file. Deleting
+# it breaks nothing.
+#
+# The one thing Render can do that Pages cannot is send response headers, which
+# is why the security headers below live here and not in a <meta> tag.
+
+services:
+  - type: web
+    name: magmps3
+    runtime: static
+    # Plain HTML, CSS and modules - there is nothing to compile.
+    buildCommand: "echo 'static site, no build step'"
+    staticPublishPath: .
+    pullRequestPreviewsEnabled: false
+
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: Permissions-Policy
+        value: geolocation=(), microphone=(), camera=(), payment=()
+
+      # What this policy is and is not worth:
+      #
+      # connect-src is the part that earns its keep. It pins the app to its own
+      # Supabase project, so injected code cannot quietly post the signed-in
+      # user's session or a branch's sales to somewhere else.
+      #
+      # script-src still needs 'unsafe-inline', because every page carries its
+      # logic in an inline <script type="module"> block. That means this policy
+      # does NOT stop injected inline script - esc() in ui.js and the delegated
+      # data-* handlers are what do that. Moving each block into its own .js
+      # file would let 'unsafe-inline' go, and is the change to make if this is
+      # ever worth hardening properly.
+      - path: /*
+        name: Content-Security-Policy
+        value: >-
+          default-src 'self';
+          script-src 'self' 'unsafe-inline' https://esm.sh;
+          style-src 'self' 'unsafe-inline';
+          img-src 'self' data:;
+          font-src 'self' data:;
+          connect-src 'self' https://vpakcpketkuuwmnmritg.supabase.co wss://vpakcpketkuuwmnmritg.supabase.co https://esm.sh;
+          frame-ancestors 'none';
+          base-uri 'self';
+          form-action 'self'
+
+# No routes block on purpose. This is a multi-page site with real .html files,
+# not a single-page app, so a catch-all rewrite to index.html would only get in
+# the way of admin.html and staff.html.
