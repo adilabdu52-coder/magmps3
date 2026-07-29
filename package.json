@@ -1,0 +1,13 @@
+{
+  "name": "magmps3",
+  "private": true,
+  "description": "Dev tooling only. The site itself has no build step and no runtime dependencies - the pages are served exactly as they are in this repo. This file exists so the browser tests can install Playwright.",
+  "scripts": {
+    "test": "npm run test:static && npm run test:browser",
+    "test:static": "node .github/scripts/check.mjs",
+    "test:browser": "node tests/browser/admin.test.mjs && node tests/browser/reset.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

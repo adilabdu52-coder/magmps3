@@ -30,7 +30,19 @@
       </div>
       <button class="btn btn-gold" id="lgBtn" type="submit">🔐 Sign In</button>
       <div class="msg" id="lgMsg"></div>
+      <div class="switch-link"><a id="toForgot" role="button" tabindex="0">Forgot password?</a></div>
       <div class="switch-link">New staff member? <a id="toSignup" role="button" tabindex="0">Create account</a></div>
+    </form>
+
+    <form class="login-card hidden" id="forgotCard" autocomplete="on">
+      <div class="field">
+        <label for="fgEmail">Email</label>
+        <input type="email" id="fgEmail" autocomplete="username" required/>
+      </div>
+      <button class="btn btn-gold" id="fgBtn" type="submit">✉ Send Reset Link</button>
+      <div class="msg" id="fgMsg"></div>
+      <div class="field-hint">Open the link on this phone and choose a new password. It expires after an hour.</div>
+      <div class="switch-link">Remembered it? <a id="toLoginB" role="button" tabindex="0">Sign in</a></div>
     </form>
 
     <form class="login-card hidden" id="signupCard" autocomplete="on">
@@ -78,9 +90,39 @@ const $ = id => document.getElementById(id);
 function show(which) {
   $("loginCard").classList.toggle("hidden", which !== "login");
   $("signupCard").classList.toggle("hidden", which !== "signup");
+  $("forgotCard").classList.toggle("hidden", which !== "forgot");
 }
 $("toSignup").addEventListener("click", () => show("signup"));
 $("toLogin").addEventListener("click", () => show("login"));
+$("toForgot").addEventListener("click", () => show("forgot"));
+$("toLoginB").addEventListener("click", () => show("login"));
+
+/* ---------- forgotten password ---------- */
+/* Before this, a cashier who forgot their password had exactly one route back:
+   the owner, in the Supabase dashboard, on a laptop. Across five branches that
+   is a phone call at 6am to unlock a till. */
+$("forgotCard").addEventListener("submit", async e => {
+  e.preventDefault();
+  const email = $("fgEmail").value.trim();
+  if (!email) { msg("fgMsg", "Enter your email", "error"); return; }
+
+  const btn = $("fgBtn");
+  btn.disabled = true; btn.textContent = "Sending...";
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: new URL("reset.html", location.href).href
+    });
+    if (error) throw new Error(error.message);
+    /* Same wording whether or not the address has an account. Saying "no such
+       user" would let anyone with the URL test addresses and learn who works
+       here, one guess at a time. */
+    msg("fgMsg", "If that address has an account, a reset link is on its way. Check spam too.", "success");
+  } catch (err) {
+    msg("fgMsg", err.message || "Could not send the reset link", "error");
+  } finally {
+    btn.disabled = false; btn.textContent = "✉ Send Reset Link";
+  }
+});
 
 $("loginCard").addEventListener("submit", async e => {
   e.preventDefault();
@@ -134,7 +176,14 @@ $("signupCard").addEventListener("submit", async e => {
     toast("Account created ✔", "ok");
     ["suName", "suPhone", "suEmail", "suPass"].forEach(i => { $(i).value = ""; });
   } catch (err) {
-    msg("suMsg", err.message || "Could not create the account", "error");
+    /* Signups get switched off in Supabase once everyone is onboarded. The
+       raw message for that is "Signups not allowed for this instance", which
+       reads to a cashier like the app is broken rather than like a door that
+       was closed on purpose. */
+    const closed = /signups?\s+not\s+allowed|signup\s+is\s+disabled/i.test(err.message || "");
+    msg("suMsg", closed
+      ? "Sign-ups are closed. Ask the manager to create your account."
+      : (err.message || "Could not create the account"), "error");
   } finally {
     btn.disabled = false; btn.textContent = "✍ Create Staff Account";
   }

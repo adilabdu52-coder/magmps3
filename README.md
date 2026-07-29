@@ -84,6 +84,33 @@ was:
 select date_trunc('day', now()) - local_day_start() as difference;
 ```
 
+## Passwords
+
+Staff set their own password at signup and can reset it themselves from the
+sign-in page: **Forgot password?** sends a link, `reset.html` takes the new
+one. Before that existed, a forgotten password meant the owner opening the
+Supabase dashboard on a laptop — across five branches that is a phone call at
+6am to unlock a till.
+
+`reset.html` handles all three shapes of recovery link Supabase has shipped
+(`#access_token`, `?token_hash`, `?code`), because which one a project sends
+depends on when its email templates were last touched.
+
+### ⚠ This needs one setting in Supabase
+
+**Authentication → URL Configuration** must list the reset page as an allowed
+redirect, or the link in the email will drop people on the site root instead
+and the flow will appear to do nothing:
+
+```
+Site URL:       https://adilabdu52-coder.github.io/magmps3/
+Redirect URLs:  https://adilabdu52-coder.github.io/magmps3/reset.html
+```
+
+The request form always answers "if that address has an account, a reset link
+is on its way", whether or not it does. Saying "no such user" would let anyone
+with the URL test addresses and learn who works here, one guess at a time.
+
 ## Testing the database contract
 
 `supabase/tests/` rebuilds the post-migration schema on a throwaway Postgres and
@@ -108,6 +135,27 @@ session gets nothing.
 The fixture is a hand-written copy of the live schema, not a dump. If a column
 is ever added or renamed for real, it has to be added here too or these checks
 will pass against a schema that no longer exists.
+
+## Browser tests
+
+`tests/browser/` drives the real pages in Chromium with `esm.sh` and every RPC
+intercepted, so they run with no network and no database:
+
+```sh
+npm install          # dev only - the site still has no build step
+npx playwright install chromium
+npm test             # static checks, then both browser suites
+```
+
+`admin.test.mjs` covers shift variance, report totals, the CSV including its
+formula-injection guard, lazy section loading, and that a failed section
+retries. `reset.test.mjs` covers all three recovery-link shapes, expired and
+already-used links, and that the request form never reveals whether an address
+has an account.
+
+These are not wired into CI — the workflow installs nothing, and adding
+Playwright to it is a bigger decision than adding the tests was. Run them
+before touching `admin.html`, `index.html` or `reset.html`.
 
 ## Why identity works this way
 
