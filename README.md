@@ -55,14 +55,17 @@ a migration is a no-op rather than an error.
 
 **All nine migrations have been applied to the live database.**
 
-`0009` removed `staff.password_hash`, the dead hashes from the login system this
-app replaced — a column no code read, produced by a hashing method nobody
+RLS is on for every table in `public`, `anon` and `authenticated` hold no direct
+table grants, prices are set per branch, deliveries write to their own trail,
+and the Shifts and Reports sections work. The old `admins` table was folded into
+`staff` by `0001` and has since been dropped.
+
+`0009` removed `staff.password_hash` — the dead hashes from the login system
+this app replaced, a column no code read, produced by a hashing method nobody
 established. Current passwords are untouched by it: Supabase Auth keeps those as
-bcrypt in `auth.users`, in a schema this app has never been granted access to. RLS is on for
-every table in `public`, `anon` and `authenticated` hold no direct table grants,
-prices are set per branch, deliveries write to their own trail, and the Shifts
-and Reports sections work. The old `admins` table was folded into `staff` by
-`0001` and has since been dropped.
+bcrypt in `auth.users`, in a schema this app has never been granted access to.
+That is also the answer to the obvious question: no, a password is not readable
+from SQL, only its hash, and bcrypt does not reverse.
 
 Staff are signed up, approved and assigned to branches across all five sites.
 Public signup is turned off in Supabase, so a new hire needs an `auth.users` row
