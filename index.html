@@ -72,7 +72,7 @@
 
 <script type="module">
 import { supabase, rpc, signIn, me } from "./config.js";
-import { msg, toast } from "./ui.js";
+import { msg, toast, authMessage } from "./ui.js";
 
 const $ = id => document.getElementById(id);
 
@@ -109,16 +109,22 @@ $("forgotCard").addEventListener("submit", async e => {
   const btn = $("fgBtn");
   btn.disabled = true; btn.textContent = "Sending...";
   try {
+    /* The error object goes to authMessage whole, not re-wrapped: the rate
+       limiter answers with status 429 and an empty body, whose message is the
+       literal string "{}". That was reaching the screen. */
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: new URL("reset.html", location.href).href
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      msg("fgMsg", authMessage(error, "Could not send the reset link. Try again in a moment."), "error");
+      return;
+    }
     /* Same wording whether or not the address has an account. Saying "no such
        user" would let anyone with the URL test addresses and learn who works
        here, one guess at a time. */
     msg("fgMsg", "If that address has an account, a reset link is on its way. Check spam too.", "success");
   } catch (err) {
-    msg("fgMsg", err.message || "Could not send the reset link", "error");
+    msg("fgMsg", authMessage(err, "Could not send the reset link"), "error");
   } finally {
     btn.disabled = false; btn.textContent = "✉ Send Reset Link";
   }
@@ -145,7 +151,7 @@ $("loginCard").addEventListener("submit", async e => {
     msg("lgMsg", "Welcome, " + staff.full_name, "success");
     setTimeout(() => location.replace(staff.role === "admin" ? "admin.html" : "staff.html"), 400);
   } catch (err) {
-    msg("lgMsg", err.message || "Sign in failed", "error");
+    msg("lgMsg", authMessage(err, "Sign in failed"), "error");
   } finally {
     btn.disabled = false; btn.textContent = "🔐 Sign In";
   }
@@ -166,7 +172,10 @@ $("signupCard").addEventListener("submit", async e => {
       email: $("suEmail").value.trim(),
       password: pass
     });
-    if (error) throw new Error(error.message);
+    if (error) {
+      msg("suMsg", authMessage(error, "Could not create the account"), "error");
+      return;
+    }
 
     /* The auth user exists; this creates the staff row against it. Status is
        pending and station is null - an admin assigns both. */
@@ -176,14 +185,7 @@ $("signupCard").addEventListener("submit", async e => {
     toast("Account created ✔", "ok");
     ["suName", "suPhone", "suEmail", "suPass"].forEach(i => { $(i).value = ""; });
   } catch (err) {
-    /* Signups get switched off in Supabase once everyone is onboarded. The
-       raw message for that is "Signups not allowed for this instance", which
-       reads to a cashier like the app is broken rather than like a door that
-       was closed on purpose. */
-    const closed = /signups?\s+not\s+allowed|signup\s+is\s+disabled/i.test(err.message || "");
-    msg("suMsg", closed
-      ? "Sign-ups are closed. Ask the manager to create your account."
-      : (err.message || "Could not create the account"), "error");
+    msg("suMsg", authMessage(err, "Could not create the account"), "error");
   } finally {
     btn.disabled = false; btn.textContent = "✍ Create Staff Account";
   }

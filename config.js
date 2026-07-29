@@ -47,7 +47,15 @@ export async function me({ refresh = false } = {}) {
 
 export async function signIn(email, password) {
   const { error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error) throw new Error(error.message);
+  if (error) {
+    /* Carry the status across. Re-wrapping in a bare Error loses it, and the
+       status is the only reliable way to recognise a rate-limit refusal -
+       those come back with an empty body whose message is the string "{}". */
+    const e = new Error(error.message);
+    e.name = "AuthError";
+    e.status = error.status;
+    throw e;
+  }
   _me = null;
   return me();
 }
