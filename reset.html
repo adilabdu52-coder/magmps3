@@ -47,7 +47,7 @@
 
 <script type="module">
 import { supabase } from "./config.js";
-import { msg, toast } from "./ui.js";
+import { msg, toast, authMessage } from "./ui.js";
 
 const $ = id => document.getElementById(id);
 const show = which =>
@@ -64,6 +64,15 @@ const bad = text => { $("badMsg").textContent = text; show("badLink"); };
      ?code=...                      PKCE
 
    All three end in the same place: a session exists, so updateUser can run. */
+/* Keeps `status` attached on the way up, so authMessage can recognise a
+   rate-limit refusal by code rather than by guessing at its wording. */
+function withStatus(error) {
+  const e = new Error(error.message);
+  e.name = "AuthError";
+  e.status = error.status;
+  return e;
+}
+
 async function establishSession() {
   const q = new URL(location.href).searchParams;
   const hash = new URLSearchParams(location.hash.slice(1));
@@ -78,14 +87,14 @@ async function establishSession() {
     const { error } = await supabase.auth.verifyOtp({
       token_hash: tokenHash, type: q.get("type") || "recovery"
     });
-    if (error) throw new Error(error.message);
+    if (error) throw withStatus(error);
     return true;
   }
 
   const code = q.get("code");
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) throw new Error(error.message);
+    if (error) throw withStatus(error);
     return true;
   }
 
@@ -106,7 +115,7 @@ async function establishSession() {
     if (await establishSession()) show("resetCard");
     else bad("This link is not valid any more, or it was opened in a different browser.");
   } catch (e) {
-    bad("That link did not work: " + e.message);
+    bad(authMessage(e, "That link did not work. Ask for a new one."));
   }
   /* Take the token out of the address bar once it has been used - it should
      not sit in browser history or stay readable over someone's shoulder. */
@@ -123,7 +132,10 @@ $("resetCard").addEventListener("submit", async e => {
   btn.disabled = true; btn.textContent = "Saving...";
   try {
     const { error } = await supabase.auth.updateUser({ password: p1 });
-    if (error) throw new Error(error.message);
+    if (error) {
+      msg("rsMsg", authMessage(error, "Could not change the password"), "error");
+      return;
+    }
 
     msg("rsMsg", "Password changed. Taking you to sign in…", "success");
     toast("Password changed ✔", "ok");
@@ -133,7 +145,7 @@ $("resetCard").addEventListener("submit", async e => {
     await supabase.auth.signOut();
     setTimeout(() => location.replace("index.html"), 900);
   } catch (err) {
-    msg("rsMsg", err.message || "Could not change the password", "error");
+    msg("rsMsg", authMessage(err, "Could not change the password"), "error");
   } finally {
     btn.disabled = false; btn.textContent = "🔑 Set Password";
   }

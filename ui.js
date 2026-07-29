@@ -22,6 +22,39 @@ export const fmt = {
   stamp: d => new Date(d).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })
 };
 
+/* ---------- auth errors, in words ---------- */
+/* Supabase's auth errors arrive in wildly different shapes: sometimes a plain
+   sentence, sometimes a status with an empty body - which stringifies to the
+   literal string "{}" and was being printed to the screen as-is. A cashier
+   locked out at 6am needs a sentence they can act on, not a fragment of JSON.
+
+   Pass the original error object rather than re-wrapping it, so `status`
+   survives; the rate limiter is the one case that is easier to recognise by
+   code than by wording. */
+export function authMessage(err, fallback = "Something went wrong. Please try again.") {
+  const t = String((typeof err === "string" ? err : err?.message) ?? "").trim();
+  const status = err?.status ?? err?.statusCode;
+
+  if (status === 429 || /rate limit|too many requests/i.test(t))
+    return "Too many emails have been sent from this project in the last hour. " +
+           "Wait an hour, or ask the manager to set your password directly.";
+  if (/invalid login credentials/i.test(t))
+    return "Wrong email or password.";
+  if (/signups? not allowed|signup is disabled/i.test(t))
+    return "Sign-ups are closed. Ask the manager to create your account.";
+  if (/email not confirmed/i.test(t))
+    return "This account has not been confirmed yet. Ask the manager.";
+  if (/(expired|invalid).*(token|link)|(token|link).*(expired|invalid)/i.test(t))
+    return "That link has expired or was already used. Ask for a new one.";
+  if (/failed to fetch|networkerror|load failed/i.test(t))
+    return "No connection. Check the internet and try again.";
+
+  // What an empty error body turns into once it has been through JSON and
+  // String(). Neither means anything to the person reading it.
+  if (!t || t === "{}" || t === "[object Object]" || t === "undefined") return fallback;
+  return t;
+}
+
 /* ---------- theme ---------- */
 const THEMES = ["dark", "light", "auto"];
 const ICONS = { dark: "\u{1F319}", light: "☀️", auto: "\u{1F313}" };

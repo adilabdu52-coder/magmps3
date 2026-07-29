@@ -27,7 +27,8 @@ export function createClient() {
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
       resetPasswordForEmail: async (email, opts) => {
         log("resetPasswordForEmail", email, opts && opts.redirectTo);
-        return { error: cfg.resetError ? { message: cfg.resetError } : null };
+        return { error: cfg.resetError
+          ? { message: cfg.resetError, status: cfg.resetStatus } : null };
       },
       verifyOtp: async (a) => {
         log("verifyOtp", a.token_hash, a.type);
@@ -106,8 +107,12 @@ console.log("\n[2] links that should not work");
     `${BASE}/reset.html#error=access_denied&error_description=Email+link+is+invalid+or+has+expired`);
   await page.waitForSelector("#badLink:not(.hidden)", { timeout: 5000 }).catch(() => {});
   ok("expired link is refused", await page.locator("#badLink").isVisible());
+  /* The server says "Email link is invalid or has expired". That is accurate
+     and useless - it does not say what to do. authMessage trades the exact
+     wording for a next step. */
   const t = await page.locator("#badMsg").textContent();
-  ok("and says why, in words", t.includes("Email link is invalid or has expired"), t);
+  ok("and says why, in plain words", /expired or was already used/i.test(t), t);
+  ok("and what to do about it", /ask for a new one/i.test(t), t);
   ok("the form is not offered", await page.locator("#resetCard").isHidden());
   await ctx.close();
 }
@@ -124,8 +129,8 @@ console.log("\n[2] links that should not work");
   const { page, ctx } = await open(`${BASE}/reset.html?token_hash=used&type=recovery`,
     { verifyError: "Token has expired or is invalid" });
   await page.waitForSelector("#badLink:not(.hidden)", { timeout: 5000 }).catch(() => {});
-  ok("a rejected token shows the server's reason",
-     (await page.locator("#badMsg").textContent()).includes("Token has expired"));
+  ok("a rejected token is explained, not quoted",
+     /expired or was already used/i.test(await page.locator("#badMsg").textContent()));
   await ctx.close();
 }
 
@@ -206,6 +211,62 @@ console.log("\n[5] signups closed");
   const t = await page.locator("#suMsg").textContent();
   ok("a closed door reads as a closed door", t.includes("Sign-ups are closed"), t);
   ok("not as a raw server error", !t.includes("instance"), t);
+  await ctx.close();
+}
+
+console.log("\n[6] errors read as sentences, not JSON");
+
+{ // the exact shape that put "{}" on screen: 429 with an empty body
+  const { page, ctx } = await open(`${BASE}/index.html`,
+    { session: null, resetError: "{}", resetStatus: 429 });
+  await page.click("#toForgot");
+  await page.fill("#fgEmail", "a@b.com");
+  await page.click("#fgBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#fgMsg").textContent.length > 0, null, { timeout: 5000 });
+  const t = await page.locator("#fgMsg").textContent();
+  ok("an empty 429 body never reaches the screen", !t.includes("{}"), t);
+  ok("it says what happened", /too many emails/i.test(t), t);
+  ok("and what to do instead", /ask the manager/i.test(t), t);
+  await ctx.close();
+}
+
+{ // same refusal, but worded rather than coded
+  const { page, ctx } = await open(`${BASE}/index.html`,
+    { session: null, resetError: "email rate limit exceeded" });
+  await page.click("#toForgot");
+  await page.fill("#fgEmail", "a@b.com");
+  await page.click("#fgBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#fgMsg").textContent.length > 0, null, { timeout: 5000 });
+  const t = await page.locator("#fgMsg").textContent();
+  ok("recognised by wording as well as by status", /too many emails/i.test(t), t);
+  await ctx.close();
+}
+
+{ // an unrecognised failure still gets a usable sentence
+  const { page, ctx } = await open(`${BASE}/index.html`,
+    { session: null, resetError: "[object Object]" });
+  await page.click("#toForgot");
+  await page.fill("#fgEmail", "a@b.com");
+  await page.click("#fgBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#fgMsg").textContent.length > 0, null, { timeout: 5000 });
+  const t = await page.locator("#fgMsg").textContent();
+  ok("[object Object] falls back to plain words", !t.includes("object"), t);
+  await ctx.close();
+}
+
+{ // a real message is passed through untouched
+  const { page, ctx } = await open(`${BASE}/index.html`,
+    { session: null, resetError: "Unable to validate email address: invalid format" });
+  await page.click("#toForgot");
+  await page.fill("#fgEmail", "a@b.com");
+  await page.click("#fgBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#fgMsg").textContent.length > 0, null, { timeout: 5000 });
+  const t = await page.locator("#fgMsg").textContent();
+  ok("a genuine message is not swallowed", t.includes("invalid format"), t);
   await ctx.close();
 }
 
