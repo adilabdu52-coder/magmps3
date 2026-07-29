@@ -125,7 +125,11 @@ second one waits an hour.
 
 Set your own SMTP under **Authentication → Emails → SMTP Settings**, then raise
 the ceiling under **Authentication → Rate Limits** — it stays at the low default
-until custom SMTP is configured.
+until custom SMTP is configured, so raising it first does nothing.
+
+**This is done.** Brevo is configured and a real reset has been sent, opened and
+completed. Delivery improved as a side effect: mail now comes from a verified
+sender rather than Supabase's shared one, which Gmail was filtering.
 
 Brevo suits this better than Resend: Resend's free tier needs a verified
 *domain*, while Brevo verifies a single sender address, so no company domain is
@@ -267,12 +271,12 @@ Verified against the real database, by hand:
 - every approved staff member linked to an `auth.users` row and a branch, with
   none left approved-but-branchless
 
+- the password reset, end to end on the live site and a real phone: request →
+  email delivered over Brevo SMTP → link opened → new password set → signed out
+  → signed back in with it
+
 Not verified:
 
-- the reset **email** itself. The request reaches Supabase and is accepted by
-  the app — confirmed on the live site — but the built-in mail service returned
-  `429` before sending anything, so no real recovery link has been opened yet.
-  Once custom SMTP is configured this needs one end-to-end run.
 - the report against a real month of trade
 - shift variance against real meter readings — the column is only meaningful
   if cashiers read the pump rather than deriving the closing figure, and that
