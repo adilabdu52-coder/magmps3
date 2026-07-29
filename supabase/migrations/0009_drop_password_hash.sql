@@ -52,6 +52,20 @@ alter table staff drop column if exists password_hash;
 commit;
 
 -- ---------------------------------------------------------------
+-- tell PostgREST the shape changed
+-- ---------------------------------------------------------------
+-- Without this, the API keeps serving from a cached picture of the schema
+-- taken before the drop, and every RPC fails with
+--
+--   Could not find the function public.me without parameters in the schema cache
+--
+-- which reads as "the function is gone" when the function is fine. Supabase
+-- reloads automatically on most DDL, but not reliably or immediately, and the
+-- window is long enough to lock an admin out of their own dashboard. It costs
+-- nothing to be explicit.
+notify pgrst, 'reload schema';
+
+-- ---------------------------------------------------------------
 -- a note on staff.username, deliberately not dropped
 -- ---------------------------------------------------------------
 -- username is equally unused - the app matches on auth_user_id and shows
