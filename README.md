@@ -51,6 +51,19 @@ decoration.
 Each one is idempotent: existence is checked before every alter, and re-running
 a migration is a no-op rather than an error.
 
+**After any migration that changes the shape of the schema, run:**
+
+```sql
+notify pgrst, 'reload schema';
+```
+
+PostgREST serves the API from a cached picture of the database. Until it is
+told, it keeps using the old one, and every RPC fails with *"Could not find the
+function public.me without parameters in the schema cache"* — which reads as
+though the function has been deleted when it is perfectly intact. Supabase
+usually reloads on its own, but not immediately, and the gap is long enough to
+lock an admin out of their own dashboard.
+
 ### Status
 
 **All nine migrations have been applied to the live database.**
