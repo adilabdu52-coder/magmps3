@@ -52,29 +52,37 @@ a migration is a no-op rather than an error.
 
 ### Status
 
-`0001`–`0006` have been applied to the live database. RLS is on for every table
-in `public`, `anon` and `authenticated` hold no direct table grants, prices are
-set per branch and deliveries write to their own trail. The old `admins` table
-was folded into `staff` by `0001` and has since been dropped.
+**All eight migrations have been applied to the live database.** RLS is on for
+every table in `public`, `anon` and `authenticated` hold no direct table grants,
+prices are set per branch, deliveries write to their own trail, and the Shifts
+and Reports sections work. The old `admins` table was folded into `staff` by
+`0001` and has since been dropped.
 
-`0007` has been applied too, so the Shifts and Reports sections work.
-
-`0008` has not been run yet. Nothing breaks without it — it corrects what
-"today" means, described below.
+Staff are signed up, approved and assigned to branches across all five sites.
+Public signup is turned off in Supabase, so a new hire needs an `auth.users` row
+created by hand — or signup re-opened for the day.
 
 ### "Today" ends at local midnight
 
-`date_trunc('day', now())` is midnight **UTC**, which is 3am in Ethiopia. Until
-`0008` is applied, every morning between local midnight and 3am:
+`date_trunc('day', now())` is midnight **UTC**, which is 3am in Ethiopia. Before
+`0008`, every morning between local midnight and 3am:
 
-- the dashboard's "Sales today" tile still shows yesterday's takings, and adds
+- the dashboard's "Sales today" tile still showed yesterday's takings, and added
   this morning's onto them
-- a cashier on the early shift sees nothing of their own work in "My Day"
+- a cashier on the early shift saw nothing of their own work in "My Day"
 
-`0008` moves the boundary to local midnight and puts the timezone in one place
+`0008` moved the boundary to local midnight and put the timezone in one place
 (`app_timezone()`) instead of a string repeated in each function. Stored data is
 untouched: `created_at` stays `timestamptz` in UTC, as it should be. Only the
-boundary used to read it back moves.
+boundary used to read it back moved.
+
+Confirmed on the live database after applying it — this returns `03:00:00`,
+which is both the proof it took and the measure of how wrong the old boundary
+was:
+
+```sql
+select date_trunc('day', now()) - local_day_start() as difference;
+```
 
 ## Testing the database contract
 
@@ -167,16 +175,20 @@ Verified on a throwaway Postgres 16, against the fixture in `supabase/tests/`:
 
 Verified against the real database, by hand:
 
-- all of `0001`–`0007` applied in order
+- all of `0001`–`0008` applied in order
 - RLS on for every table; no direct grants to `anon` or `authenticated`
+- the local-midnight boundary, which returned `03:00:00` — so the server runs
+  on UTC and the bug `0008` fixes was real here, not theoretical
 - sign-in, the admin dashboard, per-branch prices and delivery recording
+- every approved staff member linked to an `auth.users` row and a branch, with
+  none left approved-but-branchless
 
 Not verified:
 
-- `0008` has not been run against the real database
 - the report against a real month of trade
-- the Auth migration for the remaining staff (each needs an `auth.users` row
-  and a branch before they can sign in)
+- shift variance against real meter readings — the column is only meaningful
+  if cashiers read the pump rather than deriving the closing figure, and that
+  takes a week of use to tell
 
 ## Deployment
 
