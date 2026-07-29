@@ -41,6 +41,7 @@ of functions, and none of them take a caller id.
 0006_delivery_history.sql deliveries recorded, not just applied to the tank
 0007_shifts_reports.sql  shift/attendance oversight and the sales report
 0008_local_day.sql       "today" means today in Ethiopia, not in UTC
+0009_drop_password_hash.sql  remove the dead hashes from the old login system
 ```
 
 Run them in order. **`0005` is not optional** — without it the publishable key
@@ -52,11 +53,19 @@ a migration is a no-op rather than an error.
 
 ### Status
 
-**All eight migrations have been applied to the live database.** RLS is on for
-every table in `public`, `anon` and `authenticated` hold no direct table grants,
-prices are set per branch, deliveries write to their own trail, and the Shifts
-and Reports sections work. The old `admins` table was folded into `staff` by
-`0001` and has since been dropped.
+**All nine migrations have been applied to the live database.**
+
+RLS is on for every table in `public`, `anon` and `authenticated` hold no direct
+table grants, prices are set per branch, deliveries write to their own trail,
+and the Shifts and Reports sections work. The old `admins` table was folded into
+`staff` by `0001` and has since been dropped.
+
+`0009` removed `staff.password_hash` — the dead hashes from the login system
+this app replaced, a column no code read, produced by a hashing method nobody
+established. Current passwords are untouched by it: Supabase Auth keeps those as
+bcrypt in `auth.users`, in a schema this app has never been granted access to.
+That is also the answer to the obvious question: no, a password is not readable
+from SQL, only its hash, and bcrypt does not reverse.
 
 Staff are signed up, approved and assigned to branches across all five sites.
 Public signup is turned off in Supabase, so a new hire needs an `auth.users` row
