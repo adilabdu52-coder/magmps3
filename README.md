@@ -41,6 +41,7 @@ of functions, and none of them take a caller id.
 0006_delivery_history.sql deliveries recorded, not just applied to the tank
 0007_shifts_reports.sql  shift/attendance oversight and the sales report
 0008_local_day.sql       "today" means today in Ethiopia, not in UTC
+0009_drop_password_hash.sql  remove the dead hashes from the old login system
 ```
 
 Run them in order. **`0005` is not optional** — without it the publishable key
@@ -52,7 +53,16 @@ a migration is a no-op rather than an error.
 
 ### Status
 
-**All eight migrations have been applied to the live database.** RLS is on for
+`0009` has not been run yet. Nothing depends on it — it removes a column no
+code reads. It is worth running because that column holds password hashes from
+the login system this app replaced, produced by a hashing method nobody
+established, and people reuse passwords between systems. A column nobody reads
+can only ever cost something.
+
+Current passwords are untouched by it: Supabase Auth keeps those as bcrypt in
+`auth.users`, in a schema this app has never been granted access to.
+
+**All eight migrations before it have been applied to the live database.** RLS is on for
 every table in `public`, `anon` and `authenticated` hold no direct table grants,
 prices are set per branch, deliveries write to their own trail, and the Shifts
 and Reports sections work. The old `admins` table was folded into `staff` by
