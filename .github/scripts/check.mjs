@@ -88,6 +88,46 @@ for (const f of HTML) {
   else for (const [n, line] of bad) fail(f, `line ${n}: interpolation in inline handler\n      ${line.trim()}`);
 }
 
+/* ---------- 5. no fuel names written into the pages ---------- */
+console.log("\n[5] fuel names come from the database, not the markup");
+/* The original app had Diesel and Petrol typed into the markup in three
+   places: two price inputs, two literal admin_set_price calls, and a pair of
+   <option> tags in the till. A station selling anything else could not price
+   it and, worse, could not ring it up at all - the sale simply could not be
+   recorded. Fuels now come from get_prices, so adding or renaming one is an
+   UPDATE rather than a code change.
+   That is easy to undo by hand, and nothing else here would notice, so this
+   fails the build if a fuel name reappears where a control is defined. */
+const FUELS = ["Diesel", "Petrol", "Benzil", "Nafta", "Kerosene", "Benzin"];
+
+/* Narrow on purpose. Prose may name a fuel - a card explaining how pricing
+   works is not the bug - so only the places that would define a control
+   count: an <option>, a value= or data-fuel= attribute, and a quoted string
+   in script. Word boundaries matter: the company is called Mohamed Abdu Hirna
+   Gomeju Petroleum, and "Petroleum" must not read as "Petrol". */
+const patterns = (fuel) => [
+  [new RegExp(`<option\\b[^>]*>\\s*${fuel}\\b`, "i"), "an <option>"],
+  [new RegExp(`\\b(?:value|data-fuel)\\s*=\\s*["']${fuel}\\b`, "i"), "a value/data-fuel attribute"],
+  [new RegExp(`["']${fuel}\\b["']`), "a quoted string"],
+];
+
+for (const f of HTML) {
+  const src = readFileSync(join(ROOT, f), "utf8");
+  const bad = [];
+  src.split("\n").forEach((line, i) => {
+    for (const fuel of FUELS) {
+      for (const [re, where] of patterns(fuel)) {
+        if (re.test(line)) bad.push([i + 1, fuel, where, line.trim()]);
+      }
+    }
+  });
+
+  if (bad.length === 0) pass(f);
+  else
+    for (const [n, fuel, where, line] of bad)
+      fail(f, `line ${n}: "${fuel}" hard-coded in ${where} - build it from get_prices instead\n      ${line}`);
+}
+
 console.log(
   failures === 0
     ? "\nAll checks passed."
