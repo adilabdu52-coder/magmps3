@@ -111,6 +111,42 @@ The request form always answers "if that address has an account, a reset link
 is on its way", whether or not it does. Saying "no such user" would let anyone
 with the URL test addresses and learn who works here, one guess at a time.
 
+### ⚠ And custom SMTP, or resets do not actually send
+
+Supabase's built-in email is capped at roughly **two messages per hour for the
+whole project** and is not intended for production. Past that it returns `429`
+and sends nothing — and because the form deliberately never confirms whether an
+address exists, this looks identical to a successful request. The only place it
+shows up is **Logs → Auth Logs**.
+
+That ceiling was hit on the first day of use here, testing. With staff across
+five branches, two people forgetting a password on the same morning means the
+second one waits an hour.
+
+Set your own SMTP under **Authentication → Emails → SMTP Settings**, then raise
+the ceiling under **Authentication → Rate Limits** — it stays at the low default
+until custom SMTP is configured.
+
+Brevo suits this better than Resend: Resend's free tier needs a verified
+*domain*, while Brevo verifies a single sender address, so no company domain is
+required.
+
+```
+Host:     smtp-relay.brevo.com
+Port:     587
+Username: the Brevo SMTP login
+Password: the Brevo SMTP key       <- a secret; it belongs in Supabase only
+Sender:   the address verified with Brevo
+```
+
+None of this is a code change.
+
+### If email is not working, nobody is locked out
+
+An admin can set any password directly: **Authentication → Users** → the row →
+**⋯** → update password. That is the fallback for a cashier mid-shift, and it
+is how to recover the owner account itself.
+
 ## Testing the database contract
 
 `supabase/tests/` rebuilds the post-migration schema on a throwaway Postgres and
@@ -233,6 +269,10 @@ Verified against the real database, by hand:
 
 Not verified:
 
+- the reset **email** itself. The request reaches Supabase and is accepted by
+  the app — confirmed on the live site — but the built-in mail service returned
+  `429` before sending anything, so no real recovery link has been opened yet.
+  Once custom SMTP is configured this needs one end-to-end run.
 - the report against a real month of trade
 - shift variance against real meter readings — the column is only meaningful
   if cashiers read the pump rather than deriving the closing figure, and that
