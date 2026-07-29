@@ -373,3 +373,11 @@ svg.chart{display:block;width:100%;height:auto;touch-action:none}
 .fuel-tag{display:inline-flex;align-items:center;gap:6px;font-weight:600}
 .fuel-tag i{width:9px;height:9px;border-radius:2px;flex:none}
 .by{color:var(--muted);font-size:12px}
+
+/* ---------- reports ---------- */
+.report-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:4px}
+.report-actions .btn{width:auto;flex:1 1 180px}
+/* A disabled export should read as "nothing to export yet", not as a button
+   that ignored the click. */
+.report-actions .btn:disabled{opacity:.45;cursor:not-allowed}
+#repStats:empty{display:none}

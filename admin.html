@@ -29,10 +29,12 @@
   <div class="mi active" data-s="dashboard"><span class="ic">📊</span> Dashboard</div>
   <div class="mi" data-s="prices"><span class="ic">💲</span> Prices</div>
   <div class="mi" data-s="staff"><span class="ic">👥</span> Staff</div>
+  <div class="mi" data-s="shifts"><span class="ic">🕒</span> Shifts &amp; Attendance</div>
   <div class="mi" data-s="tanks"><span class="ic">🛢</span> Tanks &amp; Delivery</div>
   <div class="mi" data-s="credit"><span class="ic">🧾</span> Credit</div>
   <div class="mi" data-s="sales"><span class="ic">💰</span> Sales</div>
   <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
+  <div class="mi" data-s="reports"><span class="ic">📈</span> Reports</div>
 </nav>
 
 <div class="wrap">
@@ -130,6 +132,45 @@
     </div>
   </div>
 
+  <!-- ===== SHIFTS &amp; ATTENDANCE ===== -->
+  <div class="section" id="sec-shifts">
+    <h1 class="display">Shifts &amp; Attendance</h1>
+    <div class="sub" id="shiftSub">—</div>
+
+    <div class="card">
+      <h2>Shifts</h2>
+      <p class="card-note">Variance is what the pump metered minus what was rung up. A litre or two either
+        way is meter rounding; a large gap that keeps appearing for the same person is worth asking about.
+        A shift still open has no variance yet.</p>
+      <div class="tabs" id="shiftDays">
+        <button class="tab" data-days="1">Today</button>
+        <button class="tab active" data-days="7">7 days</button>
+        <button class="tab" data-days="30">30 days</button>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Opened</th><th>Site</th><th>Staff</th>
+            <th class="mono">Meter</th><th class="mono">Metered L</th>
+            <th class="mono">Sold L</th><th class="mono">Variance</th><th>Status</th></tr></thead>
+          <tbody id="shiftBody"><tr><td colspan="8" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Attendance</h2>
+      <p class="card-note">Hours count up to now for anyone still checked in, so a day in progress reads
+        as it stands rather than as a blank.</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Checked in</th><th>Site</th><th>Staff</th>
+            <th>Checked out</th><th class="mono">Hours</th><th>Status</th></tr></thead>
+          <tbody id="attBody"><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== TANKS ===== -->
   <div class="section" id="sec-tanks">
     <h1 class="display">Tanks</h1><div class="sub" id="tankSub">—</div>
@@ -223,6 +264,46 @@
     </div>
   </div>
 
+  <!-- ===== REPORTS ===== -->
+  <div class="section" id="sec-reports">
+    <h1 class="display">Reports</h1>
+    <div class="sub" id="repSub">—</div>
+
+    <div class="card">
+      <h2>Sales report</h2>
+      <p class="card-note">Days run midnight to midnight in Ethiopian time, not on the server's clock,
+        so an early morning sale counts against the day it was actually made. Voided sales are left out
+        entirely — a void is a correction, not a negative sale.</p>
+
+      <div class="tabs" id="repQuick">
+        <button class="tab" data-range="today">Today</button>
+        <button class="tab" data-range="7">Last 7 days</button>
+        <button class="tab active" data-range="30">Last 30 days</button>
+        <button class="tab" data-range="month">This month</button>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="repFrom">From</label><input type="date" id="repFrom"/></div>
+        <div class="field"><label for="repTo">To</label><input type="date" id="repTo"/></div>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-gold" id="repBtn">📈 Run report</button>
+        <button class="btn btn-blue" id="repCsv" disabled>⬇ Download CSV</button>
+      </div>
+      <div class="msg" id="repMsg"></div>
+
+      <div class="stats" id="repStats"></div>
+
+      <div class="divider"></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Day</th><th>Site</th><th>Fuel</th>
+            <th class="mono">Sales</th><th class="mono">Litres</th><th class="mono">ETB</th></tr></thead>
+          <tbody id="repBody"><tr><td colspan="6" class="empty">Choose a range and run the report</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </div>
 </div>
 
@@ -243,6 +324,33 @@ let allStaff = [], allSales = [], staffFilter = "pending", payFilter = "all";
    and scopes them to their own branch regardless. */
 const stationParam = () => (selected === "all" ? null : selected);
 const stationName = id => stations.find(s => s.id === id)?.name || "—";
+
+/* ---------- failure states ---------- */
+/* A loader that fails used to leave "Loading..." on screen for good, which
+   reads as a branch with no data rather than as a request that never
+   returned. These say what happened in the panel itself; loadFailed still
+   raises the connection banner and logs the detail. */
+const FAIL_TEXT = what => `Could not load ${what}. Check the connection, then Refresh.`;
+
+/* Loaders report their own failures into the panel instead of throwing, so a
+   caller cannot tell from the return value that anything went wrong. This flag
+   is how it finds out: showSection clears it, runs the loader, and puts the
+   section back on the stale list if either helper below fired. Without it a
+   section that failed once would stay dead until a full refresh. */
+let panelFailed = false;
+
+function failRows(bodyId, cols, what) {
+  panelFailed = true;
+  const el = $(bodyId);
+  if (el) el.innerHTML = `<tr><td colspan="${cols}" class="empty">${esc(FAIL_TEXT(what))}</td></tr>`;
+}
+function failPanel(id, what) {
+  panelFailed = true;
+  const el = $(id);
+  if (!el) return;
+  el.className = "empty";
+  el.textContent = FAIL_TEXT(what);
+}
 
 /* ---------- site rail ---------- */
 function renderRail() {
@@ -268,7 +376,7 @@ async function loadDashboard() {
     renderDashStats();
     if (selected === "all") renderStockTable(); else renderOneSite();
     stampUpdated("updStamp");
-  } catch (e) { loadFailed("loadDashboard", e); }
+  } catch (e) { failRows("stockBody", 7, "the site overview"); loadFailed("loadDashboard", e); }
 }
 
 function renderDashStats() {
@@ -341,7 +449,10 @@ async function renderOneSite() {
         <p>${esc(s.staff_name)} · ${esc(fmt.stamp(s.created_at))} · ${esc(s.payment_method)}</p></div>
         <div class="amt">+${fmt.int(s.total_etb)} ETB</div></div>`).join("")
       : "No transactions yet";
-  } catch (e) { loadFailed("renderOneSite", e); }
+  } catch (e) {
+    failPanel("oneSiteTanks", "tanks"); failPanel("oneSiteTx", "transactions");
+    loadFailed("renderOneSite", e);
+  }
 }
 
 /* ---------- prices ---------- */
@@ -367,7 +478,7 @@ async function loadPrices() {
       `<div class="field"><label>${esc(p.fuel_type)}</label>
         <input type="number" data-fuel="${esc(p.fuel_type)}" step="0.01" min="0"
                inputmode="decimal" value="${esc(p.price_per_liter)}"/></div>`).join("");
-  } catch (e) { loadFailed("loadPrices", e); }
+  } catch (e) { failPanel("priceFields", "prices"); loadFailed("loadPrices", e); }
 }
 
 async function savePrices() {
@@ -418,7 +529,7 @@ async function loadHistory() {
     const rows = await rpc("price_history", { p_station_id: selected, p_days: 180 }) || [];
     renderHistTable(rows);
     renderHistChart(rows);
-  } catch (e) { loadFailed("loadHistory", e); }
+  } catch (e) { failRows("histBody", 6, "price history"); loadFailed("loadHistory", e); }
 }
 
 function renderHistTable(rows) {
@@ -506,7 +617,7 @@ function renderHistChart(rows) {
 /* ---------- staff ---------- */
 async function loadStaff() {
   try { allStaff = await rpc("admin_list_staff") || []; renderStaff(); }
-  catch (e) { loadFailed("loadStaff", e); }
+  catch (e) { failPanel("staffList", "staff"); loadFailed("loadStaff", e); }
 }
 
 function renderStaff() {
@@ -542,6 +653,167 @@ function renderStaff() {
     </div></div>`).join("");
 }
 
+/* ---------- shifts & attendance ---------- */
+let shiftDays = 7;
+
+async function loadShiftsAndAttendance() {
+  const p = { p_station_id: stationParam(), p_days: shiftDays };
+  await Promise.all([loadShifts(p), loadAttendance(p)]);
+}
+
+async function loadShifts(p) {
+  try {
+    const rows = await rpc("list_shifts", p) || [];
+    $("shiftBody").innerHTML = rows.length ? rows.map(shiftRow).join("")
+      : `<tr><td colspan="8" class="empty">No shifts opened in the last ${Number(shiftDays)} days</td></tr>`;
+  } catch (e) { failRows("shiftBody", 8, "shifts"); loadFailed("loadShifts", e); }
+}
+
+/* Variance is metered minus sold. Positive means fuel left the pump that was
+   never rung up, which is the direction worth flagging, so it reuses the red
+   of a price rise. Under half a litre is meter rounding and stays neutral. */
+function shiftRow(s) {
+  const open = !s.closed_at;
+  const v = s.variance_liters == null ? null : Number(s.variance_liters);
+  const cls = v == null ? "" : v > 0.5 ? "up" : v < -0.5 ? "down" : "";
+  return `<tr>
+    <td class="mono">${esc(fmt.stamp(s.opened_at))}</td>
+    <td>${esc(s.station_name)}</td>
+    <td>${esc(s.staff_name || "—")}</td>
+    <td class="mono">${fmt.int(s.opening_meter)} → ${s.closing_meter == null ? "—" : fmt.int(s.closing_meter)}</td>
+    <td class="mono">${s.metered_liters == null ? "—" : fmt.int(s.metered_liters)}</td>
+    <td class="mono">${fmt.int(s.sold_liters)}</td>
+    <td class="delta ${cls}">${v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2)}</td>
+    <td><span class="tag ${open ? "open" : "closed"}">${open ? "open" : "closed"}</span></td></tr>`;
+}
+
+async function loadAttendance(p) {
+  try {
+    const rows = await rpc("list_attendance", p) || [];
+    $("attBody").innerHTML = rows.length ? rows.map(a => {
+      const on = !a.check_out;
+      return `<tr>
+        <td class="mono">${esc(fmt.stamp(a.check_in))}</td>
+        <td>${esc(a.station_name)}</td>
+        <td>${esc(a.staff_name || "—")}</td>
+        <td class="mono">${a.check_out ? esc(fmt.stamp(a.check_out)) : "—"}</td>
+        <td class="mono">${Number(a.hours || 0).toFixed(2)}</td>
+        <td><span class="tag ${on ? "open" : "closed"}">${on ? "on duty" : "done"}</span></td></tr>`;
+    }).join("")
+      : `<tr><td colspan="6" class="empty">Nobody checked in during the last ${Number(shiftDays)} days</td></tr>`;
+  } catch (e) { failRows("attBody", 6, "attendance"); loadFailed("loadAttendance", e); }
+}
+
+/* ---------- reports ---------- */
+let repRows = [];
+
+const ymd = d =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/* The pickers read the browser's own calendar; the grouping happens in
+   Ethiopian time in the database. For a station in Ethiopia those agree, and
+   the card says which one decides where a day ends. */
+function setRange(kind) {
+  const now = new Date();
+  let from = new Date(now);
+  if (kind === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
+  else if (kind !== "today") from.setDate(now.getDate() - (Number(kind) - 1));
+  $("repFrom").value = ymd(from);
+  $("repTo").value = ymd(now);
+}
+
+async function runReport() {
+  const from = $("repFrom").value, to = $("repTo").value;
+  if (!from || !to) { msg("repMsg", "Choose both dates", "error"); return; }
+  if (from > to) { msg("repMsg", "The From date is after the To date", "error"); return; }
+
+  const btn = $("repBtn"); btn.disabled = true;
+  try {
+    repRows = await rpc("report_sales",
+      { p_station_id: stationParam(), p_from: from, p_to: to }) || [];
+    renderReport();
+    msg("repMsg", repRows.length ? "" : "No sales in this range", repRows.length ? "" : "error");
+  } catch (e) {
+    repRows = [];
+    $("repCsv").disabled = true;
+    $("repStats").innerHTML = "";
+    failRows("repBody", 6, "the report");
+    msg("repMsg", "Could not run the report", "error");
+    loadFailed("runReport", e);
+  } finally { btn.disabled = false; }
+}
+
+function renderReport() {
+  const t = repRows.reduce((a, r) => ({
+    etb: a.etb + Number(r.sales_etb || 0),
+    l:   a.l   + Number(r.liters || 0),
+    n:   a.n   + Number(r.sale_count || 0)
+  }), { etb: 0, l: 0, n: 0 });
+  // Days with no trade are not rows, so the average is per trading day.
+  const days = new Set(repRows.map(r => r.day)).size;
+
+  $("repStats").innerHTML = [
+    ["Total sales",  fmt.int(t.etb), "ETB",  "v-gold"],
+    ["Litres sold",  fmt.int(t.l),   "L",    "v-blue"],
+    ["Transactions", fmt.int(t.n),   days ? `over ${days} trading day${days === 1 ? "" : "s"}` : "—", "v-purple"],
+    ["Average day",  days ? fmt.int(t.etb / days) : "0", "ETB", "v-green"]
+  ].map(([l, v, u, c]) =>
+    `<div class="scard"><div class="lbl">${l}</div>
+      <div class="val ${c}">${v}</div><div class="unit">${u}</div></div>`).join("");
+
+  $("repBody").innerHTML = repRows.length ? repRows.map(r => `<tr>
+    <td class="mono">${esc(r.day)}</td>
+    <td>${esc(r.station_name)}</td>
+    <td>${esc(r.fuel_type)}</td>
+    <td class="mono">${fmt.int(r.sale_count)}</td>
+    <td class="mono">${fmt.int(r.liters)}</td>
+    <td class="mono">${fmt.money(r.sales_etb)}</td></tr>`).join("")
+    : '<tr><td colspan="6" class="empty">No sales in this range</td></tr>';
+
+  $("repCsv").disabled = repRows.length === 0;
+}
+
+/* Excel and Sheets run a cell that begins with =, +, - or @. Branch and fuel
+   names come from the database, so a branch named "=1+1" would execute when
+   the file is opened. The apostrophe keeps such a value text. Escaping the
+   page is not enough here - the risk lives in the downloaded file. */
+function csvCell(v) {
+  let s = v === null || v === undefined ? "" : String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+function downloadCsv(filename, rows) {
+  // The BOM is what makes Excel read this as UTF-8; without it Amharic and
+  // Oromo names open as mojibake.
+  const csv = "﻿" + rows.map(r => r.map(csvCell).join(",")).join("\r\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function exportReport() {
+  if (!repRows.length) return;
+  const rows = [["Day", "Site", "Fuel", "Sales", "Litres", "ETB"]];
+  let n = 0, l = 0, etb = 0;
+  repRows.forEach(r => {
+    rows.push([r.day, r.station_name, r.fuel_type, r.sale_count, r.liters, r.sales_etb]);
+    n += Number(r.sale_count || 0); l += Number(r.liters || 0); etb += Number(r.sales_etb || 0);
+  });
+  rows.push([], ["Total", "", "", n, l, etb.toFixed(2)]);
+
+  const where = selected === "all"
+    ? "all-sites"
+    : stationName(selected).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  downloadCsv(`magpms-sales-${where}-${$("repFrom").value}-to-${$("repTo").value}.csv`, rows);
+  toast("Report downloaded", "ok");
+}
+
 /* ---------- tanks & delivery ---------- */
 async function loadTanks() {
   const el = $("tankList");
@@ -555,7 +827,7 @@ async function loadTanks() {
       : "No tanks configured";
     $("dvTank").innerHTML = tanks.map(t =>
       `<option value="${esc(t.id)}">${esc(selected === "all" ? stationName(t.station_id) + " · " : "")}${esc(t.tank_name)} (${esc(t.fuel_type)})</option>`).join("");
-  } catch (e) { loadFailed("loadTanks", e); }
+  } catch (e) { failPanel("tankList", "tanks"); loadFailed("loadTanks", e); }
 }
 
 async function loadDeliveries() {
@@ -569,7 +841,7 @@ async function loadDeliveries() {
       <td>${esc(d.note || "")}</td>
       <td class="by">${esc(d.recorded_by_name || "—")}</td></tr>`).join("")
       : '<tr><td colspan="6" class="empty">No deliveries recorded</td></tr>';
-  } catch (e) { loadFailed("loadDeliveries", e); }
+  } catch (e) { failRows("dvBody", 6, "deliveries"); loadFailed("loadDeliveries", e); }
 }
 
 async function recordDelivery() {
@@ -603,7 +875,7 @@ async function loadCustomers() {
         <span class="tag ${Number(c.balance) > 0 ? "pending" : "approved"}">owes ${fmt.money(c.balance)} ETB</span></div>
       <div>${Number(c.balance) > 0 ? `<button class="btn btn-blue" data-act="credit-pay" data-id="${esc(c.id)}" data-name="${esc(c.name)}">💵 Payment</button>` : ""}</div>
       </div>`).join("") : "No credit customers";
-  } catch (e) { loadFailed("loadCustomers", e); }
+  } catch (e) { failPanel("custList", "credit customers"); loadFailed("loadCustomers", e); }
 }
 
 async function addCustomer() {
@@ -631,7 +903,7 @@ async function loadSales() {
   try {
     allSales = await rpc("list_sales", { p_station_id: stationParam(), p_limit: 200 }) || [];
     renderSales();
-  } catch (e) { loadFailed("loadSales", e); }
+  } catch (e) { failRows("salesBody", 7, "sales"); loadFailed("loadSales", e); }
 }
 
 function renderSales() {
@@ -666,7 +938,7 @@ async function loadExpenses() {
       <td>${esc(e.category)}</td><td>${esc(e.description || "")}</td>
       <td class="mono">${fmt.money(e.amount_etb)}</td></tr>`).join("")
       : '<tr><td colspan="5" class="empty">No expenses recorded</td></tr>';
-  } catch (e) { loadFailed("loadExpenses", e); }
+  } catch (e) { failRows("expBody", 5, "expenses"); loadFailed("loadExpenses", e); }
 }
 
 async function addExpense() {
@@ -739,6 +1011,55 @@ function bindRowActions() {
 }
 
 /* ---------- section switching ---------- */
+/* Every section used to reload on every rail click: nine parallel requests for
+   panels the admin may never open, and one more for each section added. Each
+   section now names its loader and fetches when it is shown, or when the
+   branch has changed since it was last shown.
+
+   The dashboard is the exception. admin_dashboard() returns one row per branch
+   in a single call, so changing branch only re-renders what is already held. */
+const LOADERS = {
+  dashboard: async () => {},
+  prices:    async () => { await Promise.all([loadPrices(), loadHistory()]); },
+  staff:     loadStaff,
+  shifts:    loadShiftsAndAttendance,
+  tanks:     async () => { await Promise.all([loadTanks(), loadDeliveries()]); },
+  credit:    loadCustomers,
+  sales:     loadSales,
+  expenses:  loadExpenses,
+  /* A report belongs to the branch and range it was run for. Clearing beats
+     leaving one branch's figures sitting under another branch's heading. */
+  reports:   async () => {
+    repRows = [];
+    $("repCsv").disabled = true;
+    $("repStats").innerHTML = "";
+    $("repBody").innerHTML = '<tr><td colspan="6" class="empty">Choose a range and run the report</td></tr>';
+    msg("repMsg", "", "");
+  }
+};
+
+const stale = new Set();
+let current = "dashboard";
+
+function invalidateAll() {
+  Object.keys(LOADERS).forEach(k => stale.add(k));
+  stale.delete("dashboard");
+}
+
+async function showSection(name) {
+  if (!LOADERS[name]) return;
+  current = name;
+  if (!stale.has(name)) return;
+  stale.delete(name);
+
+  panelFailed = false;
+  try { await LOADERS[name](); }
+  catch (e) { panelFailed = true; loadFailed("showSection:" + name, e); }
+  // Back on the list if anything failed, so opening the section again retries
+  // rather than showing the same dead panel.
+  if (panelFailed) stale.add(name);
+}
+
 function applySelection() {
   const isAll = selected === "all";
   const where = isAll ? `All ${stations.length} sites` : stationName(selected);
@@ -747,11 +1068,17 @@ function applySelection() {
   $("dashSub").textContent = isAll ? "Every branch at a glance" : "Branch overview";
   $("allSitesCard").classList.toggle("hidden", !isAll);
   $("oneSiteCard").classList.toggle("hidden", isAll);
-  ["priceSub", "tankSub", "creditSub", "salesSub", "expSub"].forEach(i => { $(i).textContent = where; });
+  ["priceSub", "tankSub", "creditSub", "salesSub", "expSub", "shiftSub", "repSub"]
+    .forEach(i => { $(i).textContent = where; });
 
   renderRail(); renderDashStats();
   if (isAll) renderStockTable(); else renderOneSite();
-  loadPrices(); loadHistory(); loadTanks(); loadDeliveries(); loadCustomers(); loadSales(); loadExpenses(); renderStaff();
+
+  invalidateAll();
+  // The staff list is filtered by branch in the browser, so it needs a
+  // re-render rather than another round trip.
+  if (allStaff.length) { stale.delete("staff"); renderStaff(); }
+  showSection(current);
 }
 
 function bind() {
@@ -763,6 +1090,31 @@ function bind() {
   $("exBtn").addEventListener("click", addExpense);
   $("staffSearch").addEventListener("input", renderStaff);
   $("saleSearch").addEventListener("input", renderSales);
+  $("repBtn").addEventListener("click", runReport);
+  $("repCsv").addEventListener("click", exportReport);
+
+  $("shiftDays").addEventListener("click", e => {
+    const t = e.target.closest("[data-days]");
+    if (!t) return;
+    shiftDays = Number(t.getAttribute("data-days"));
+    $("shiftDays").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    loadShiftsAndAttendance();
+  });
+  $("repQuick").addEventListener("click", e => {
+    const t = e.target.closest("[data-range]");
+    if (!t) return;
+    $("repQuick").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    setRange(t.getAttribute("data-range"));
+  });
+  // Typing a date by hand means no preset is in force any more.
+  ["repFrom", "repTo"].forEach(id => $(id).addEventListener("change", () =>
+    $("repQuick").querySelectorAll(".tab").forEach(x => x.classList.remove("active"))));
+
+  /* ui.js decides which panel is visible; this decides what it holds. */
+  document.addEventListener("click", e => {
+    const nav = e.target.closest("[data-s]");
+    if (nav) showSection(nav.getAttribute("data-s"));
+  });
 
   $("rail").addEventListener("click", e => {
     const chip = e.target.closest("[data-site]");
@@ -787,8 +1139,12 @@ function bind() {
   bindRowActions();
 }
 
+/* Refresh means the dashboard, which is always live, plus whatever is on
+   screen. The rest is marked stale and fetched when it is next opened. */
 function refreshAll() {
-  loadDashboard(); loadTanks(); loadDeliveries(); loadSales(); loadCustomers(); loadExpenses(); loadStaff();
+  loadDashboard();
+  invalidateAll();
+  showSection(current);
 }
 
 (async function init() {
@@ -803,9 +1159,9 @@ function refreshAll() {
   $("app").style.display = "block";
 
   bind();
+  setRange("30");
   await loadDashboard();
   applySelection();
-  loadStaff();
   setInterval(loadDashboard, 60000);
 })();
 </script>
