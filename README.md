@@ -53,16 +53,12 @@ a migration is a no-op rather than an error.
 
 ### Status
 
-`0009` has not been run yet. Nothing depends on it — it removes a column no
-code reads. It is worth running because that column holds password hashes from
-the login system this app replaced, produced by a hashing method nobody
-established, and people reuse passwords between systems. A column nobody reads
-can only ever cost something.
+**All nine migrations have been applied to the live database.**
 
-Current passwords are untouched by it: Supabase Auth keeps those as bcrypt in
-`auth.users`, in a schema this app has never been granted access to.
-
-**All eight migrations before it have been applied to the live database.** RLS is on for
+`0009` removed `staff.password_hash`, the dead hashes from the login system this
+app replaced — a column no code read, produced by a hashing method nobody
+established. Current passwords are untouched by it: Supabase Auth keeps those as
+bcrypt in `auth.users`, in a schema this app has never been granted access to. RLS is on for
 every table in `public`, `anon` and `authenticated` hold no direct table grants,
 prices are set per branch, deliveries write to their own trail, and the Shifts
 and Reports sections work. The old `admins` table was folded into `staff` by
