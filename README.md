@@ -44,6 +44,32 @@ of functions, and none of them take a caller id.
 0009_drop_password_hash.sql  remove the dead hashes from the old login system
 ```
 
+### One file instead of nine
+
+`supabase/install_all.sql` is all nine concatenated, in order, with a guard and
+a report around them. Paste it into the SQL editor and run it once — easier
+than nine files on a phone, and it says what it did afterwards:
+
+```
+branches ................ 5
+tanks ................... 20
+staff ................... 12 (12 can sign in)
+key functions present ... 10 of 10
+tables with RLS on ...... 17
+```
+
+It is safe to run repeatedly. Verified on Postgres 16: three consecutive runs
+against a database shaped like the *original* app produce zero errors and
+identical row counts — nothing is duplicated, nothing is re-seeded.
+
+It refuses to run against a database missing `staff`, `tanks`, `sales` or
+`fuel_prices`, which is the cheapest available check against the mistake that
+cost a night here: **running SQL against the wrong Supabase project.** It cannot
+read your address bar, so check the ref yourself first.
+
+It does *not* create the base tables. Those came with the original app. This
+upgrades an existing schema; it does not build one from nothing.
+
 Run them in order. **`0005` is not optional** — without it the publishable key
 in `config.js` can read every table directly, and the functions become
 decoration.
