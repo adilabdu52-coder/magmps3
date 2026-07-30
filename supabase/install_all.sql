@@ -13,7 +13,7 @@
 -- ----------------------------------------------------------------------------
 -- The address bar must contain this project ref:
 --
---     https://supabase.com/dashboard/project/vpakcpketkuuwmnmritg/sql
+--     https://supabase.com/dashboard/project/lnqwooqpnlxifxeukozd/sql
 --
 -- A night was lost to running these against a different project that happened
 -- to have a `staff` table too. Every error that followed - "current_staff()
@@ -188,7 +188,7 @@ commit;
 --   // create-auth-users.mjs
 --   import { createClient } from "@supabase/supabase-js";
 --   const db = createClient(
---     "https://vpakcpketkuuwmnmritg.supabase.co",
+--     "https://lnqwooqpnlxifxeukozd.supabase.co",
 --     process.env.SERVICE_ROLE_KEY               // export it, do not inline it
 --   );
 --
