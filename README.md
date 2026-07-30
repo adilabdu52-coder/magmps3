@@ -44,6 +44,29 @@ of functions, and none of them take a caller id.
 0009_drop_password_hash.sql  remove the dead hashes from the old login system
 ```
 
+### Building on a brand-new project
+
+`supabase/fresh_install.sql` creates everything from nothing — tables, functions,
+the five branches, their tanks, the lockdown. One paste, then set prices and let
+staff sign up.
+
+Use it when the project is empty. Use `install_all.sql` instead when the
+database already holds the original app's tables — that one upgrades, it does
+not build.
+
+Verified on an empty Postgres 16: 5 branches, 20 tanks, 10 of 10 functions, RLS
+on, and three consecutive runs with zero errors and identical counts. The first
+admin is made by hand, once, because a fresh system has nobody to approve
+anyone:
+
+```sql
+update staff set role = 'admin', status = 'approved', station_id = null
+ where email = 'YOUR-EMAIL';
+```
+
+`station_id` stays null on purpose — the central admin belongs to no branch,
+which is what makes the dashboard show all five.
+
 ### One file instead of nine
 
 `supabase/install_all.sql` is all nine concatenated, in order, with a guard and
