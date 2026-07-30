@@ -510,6 +510,20 @@ commit;
 -- ---------------------------------------------------------------
 -- Every one of these takes a caller id as its first argument. Leaving them
 -- callable would leave the original hole open beside the fix.
+--
+-- THREE ARE DELIBERATELY ABSENT FROM THIS LIST:
+--
+--   list_sales(uuid,int)
+--   admin_set_price(uuid,text,numeric)
+--   admin_add_credit_customer(uuid,text,text,text,numeric)
+--
+-- Their old and new signatures are identical - the old leading uuid was a
+-- caller id, the new one is a station id - so dropping "the old one" by
+-- signature drops the new one that was just created a few lines above. That is
+-- exactly what happened: the file created them and then deleted them, and the
+-- Sales page, the price form and Add Customer all called functions that were
+-- not there. `create or replace` has already replaced them; there is nothing
+-- left to retire.
 drop function if exists login_staff(text,text);
 drop function if exists login_admin(text,text);
 drop function if exists create_first_admin(text,text,text);
@@ -519,15 +533,12 @@ drop function if exists admin_set_staff_status(uuid,uuid,text);
 drop function if exists admin_set_staff_role(uuid,uuid,text);
 drop function if exists record_sale(uuid,text,numeric,numeric,text);
 drop function if exists record_sale_v2(uuid,text,numeric,text,uuid);
-drop function if exists list_sales(uuid,int);
 drop function if exists list_tanks();
 drop function if exists get_prices();
-drop function if exists admin_set_price(uuid,text,numeric);
 drop function if exists open_shift(uuid,numeric);
 drop function if exists close_shift(uuid,numeric);
 drop function if exists my_open_shift(uuid);
 drop function if exists admin_record_delivery(uuid,int,numeric,text);
-drop function if exists admin_add_credit_customer(uuid,text,text,text,numeric);
 drop function if exists list_credit_customers();
 drop function if exists admin_credit_payment(uuid,uuid,numeric);
 drop function if exists admin_add_expense(uuid,text,text,numeric);

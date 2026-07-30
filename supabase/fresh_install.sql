@@ -1,69 +1,114 @@
--- MAGPMS — every migration in one file
+-- MAGPMS — build the whole system on a brand-new Supabase project
 -- ============================================================================
 --
---   0001 identity      0004 rpcs        0007 shifts & reports
---   0002 stations      0005 lockdown    0008 local day
---   0003 price history 0006 deliveries  0009 drop password_hash
---
--- Safe to run more than once. Every step checks before it acts, so re-running
--- reports "already present" rather than failing or duplicating anything.
+-- ONE paste. Creates every table, every function, the five branches and their
+-- tanks, then locks the database down. Nothing else to run afterwards.
 --
 -- ----------------------------------------------------------------------------
--- BEFORE YOU PRESS RUN: check which project you are in
+-- WHEN TO USE THIS
 -- ----------------------------------------------------------------------------
--- The address bar must contain this project ref:
+--   fresh_install.sql   a NEW, EMPTY project        <- this file
+--   install_all.sql     a project that already has the original app's tables
 --
---     https://supabase.com/dashboard/project/vpakcpketkuuwmnmritg/sql
---
--- A night was lost to running these against a different project that happened
--- to have a `staff` table too. Every error that followed - "current_staff()
--- does not exist", "me() not in the schema cache", passwords that would not
--- work - was that one mistake wearing different masks.
---
--- The guard below catches an empty or unrelated database. It cannot read your
--- address bar. Look at the URL.
+-- Running this on a database that already holds data is safe - every create is
+-- `if not exists` and every seed checks first - but it is not what it is for.
 --
 -- ----------------------------------------------------------------------------
--- WHAT THIS DOES NOT DO
+-- BEFORE YOU PRESS RUN
 -- ----------------------------------------------------------------------------
--- It does not create staff, tanks, sales, fuel_prices, shifts, attendance,
--- expenses or credit_customers. Those came with the original app and are
--- assumed to exist. This upgrades that schema; it does not build one.
+-- Check the project ref in the address bar and make sure it matches the one in
+-- config.js. A whole night was lost to running SQL against the wrong project:
+-- two Supabase accounts, four projects, and every error that followed was that
+-- one mistake wearing a different mask.
+--
+-- After this finishes, the last lines print what was built. Read them.
 -- ============================================================================
 
--- Resolve names explicitly rather than trusting the session. The SQL editor
--- does not always put public on the search_path, and a function body is parsed
--- with the CREATING session's path - not the `set search_path` written into the
--- function itself. That single subtlety produced hours of "does not exist" for
--- functions that were present the whole time.
+-- Supabase ships an `extensions` schema; a plain Postgres does not. Creating it
+-- when absent costs nothing and lets this file be tested somewhere other than
+-- the database it is meant for - which is the only way to know it works.
+create schema if not exists extensions;
+
 set search_path = public, extensions;
 
+create extension if not exists pgcrypto with schema extensions;
+
 -- ----------------------------------------------------------------------------
--- guard: is this the right kind of database at all?
+-- base tables
 -- ----------------------------------------------------------------------------
-do $guard$
-declare
-  missing text := '';
-  t text;
-begin
-  foreach t in array array['staff','tanks','sales','fuel_prices'] loop
-    if to_regclass('public.' || t) is null then
-      missing := missing || ' ' || t;
-    end if;
-  end loop;
+-- These came with the original app rather than from any migration, so a new
+-- project has none of them. Shapes match what the functions expect: tanks.id is
+-- integer, everything else uuid.
 
-  if missing <> '' then
-    raise exception
-      E'This database is missing tables the migrations expect:%s\n\n'
-      'That usually means the SQL editor is connected to the wrong project.\n'
-      'Check the ref in the address bar against config.js before re-running.',
-      missing;
-  end if;
+create table if not exists staff (
+  id            uuid primary key default gen_random_uuid(),
+  full_name     text,
+  username      text,
+  phone         text,
+  email         text,
+  role          text default 'operator',
+  status        text default 'pending',
+  created_at    timestamptz not null default now());
 
-  raise notice 'base tables present - proceeding';
-end $guard$;
+create table if not exists tanks (
+  id              serial primary key,
+  tank_name       text,
+  fuel_type       text,
+  capacity_liters numeric,
+  current_liters  numeric default 0);
 
+create table if not exists credit_customers (
+  id           uuid primary key default gen_random_uuid(),
+  name         text,
+  phone        text,
+  plate_no     text,
+  credit_limit numeric default 0,
+  balance      numeric default 0);
 
+create table if not exists sales (
+  id                 uuid primary key default gen_random_uuid(),
+  staff_id           uuid references staff(id),
+  fuel_type          text,
+  liters             numeric,
+  total_etb          numeric,
+  payment_method     text,
+  credit_customer_id uuid references credit_customers(id),
+  voided             boolean default false,
+  created_at         timestamptz not null default now());
+
+create table if not exists fuel_prices (
+  id              uuid primary key default gen_random_uuid(),
+  fuel_type       text,
+  price_per_liter numeric);
+
+create table if not exists shifts (
+  id            uuid primary key default gen_random_uuid(),
+  staff_id      uuid references staff(id),
+  opening_meter numeric,
+  closing_meter numeric,
+  opened_at     timestamptz,
+  closed_at     timestamptz);
+
+create table if not exists attendance (
+  id        uuid primary key default gen_random_uuid(),
+  staff_id  uuid references staff(id),
+  check_in  timestamptz,
+  check_out timestamptz);
+
+create table if not exists expenses (
+  id          uuid primary key default gen_random_uuid(),
+  category    text,
+  description text,
+  amount_etb  numeric,
+  created_at  timestamptz not null default now());
+
+create table if not exists deliveries (
+  id          uuid primary key default gen_random_uuid(),
+  tank_id     int references tanks(id),
+  liters      numeric,
+  note        text,
+  recorded_by uuid references staff(id),
+  created_at  timestamptz not null default now());
 
 
 
@@ -1700,61 +1745,55 @@ notify pgrst, 'reload schema';
 --    identity had broken, sign-in would fail at me() rather than silently.
 
 -- ============================================================================
--- FINISH: tell PostgREST the schema changed
+-- FINISH
 -- ============================================================================
--- Without this the API keeps serving from a cached picture taken before these
--- ran, and every RPC fails with "Could not find the function public.me without
--- parameters in the schema cache" - which reads as though the function has been
--- deleted when it is sitting there intact.
 notify pgrst, 'reload schema';
 
--- ============================================================================
--- REPORT: what the database looks like now
--- ============================================================================
 do $report$
 declare
-  v_stations int; v_staff int; v_linked int; v_tanks int; v_fns int; v_rls int;
+  v_stations int; v_tanks int; v_fns int; v_rls int;
 begin
   select count(*) into v_stations from stations;
-  select count(*) into v_staff    from staff;
-  select count(*) into v_linked   from staff where auth_user_id is not null;
   select count(*) into v_tanks    from tanks;
-
   select count(*) into v_fns from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'public'
      and p.proname in ('me','current_staff','is_admin','current_station',
                        'admin_dashboard','list_shifts','list_attendance',
                        'report_sales','record_sale','local_day_start');
-
   select count(*) into v_rls from pg_tables
    where schemaname = 'public' and rowsecurity;
 
   raise notice '--------------------------------------------------';
-  raise notice 'branches ................ %', v_stations;
-  raise notice 'tanks ................... %', v_tanks;
-  raise notice 'staff ................... % (% can sign in)', v_staff, v_linked;
-  raise notice 'key functions present ... % of 10', v_fns;
+  raise notice 'branches ................ % (expect 5)', v_stations;
+  raise notice 'tanks ................... % (expect 20)', v_tanks;
+  raise notice 'key functions ........... % of 10', v_fns;
   raise notice 'tables with RLS on ...... %', v_rls;
   raise notice '--------------------------------------------------';
-
-  if v_fns < 10 then
-    raise notice 'SOME FUNCTIONS ARE MISSING - scroll up for the error that stopped them';
-  end if;
-  if v_linked < v_staff then
-    raise notice '% staff have no auth account and cannot sign in yet', v_staff - v_linked;
+  if v_stations = 5 and v_tanks = 20 and v_fns = 10 then
+    raise notice 'READY. Next: sign up at the app, then promote yourself to admin.';
+  else
+    raise notice 'SOMETHING IS MISSING - scroll up for the error that stopped it';
   end if;
 end $report$;
 
 -- ============================================================================
--- AFTERWARDS
+-- WHAT TO DO NEXT
 -- ============================================================================
--- 1. Sign out of the app, close the tab, reopen it, sign in. That exercises
---    me(), which is where a broken identity layer shows up first.
+-- 1. Put this project's URL and publishable key into config.js
+--    (Settings -> API. The publishable key only - never service_role.)
 --
--- 2. If the app reports a schema cache error anyway:
---       Settings -> General -> Restart project
---    That rebuilds the cache from nothing and always clears it.
+-- 2. Open the app and use "Create account" to sign yourself up.
 --
--- 3. Nothing here touches passwords. Supabase Auth keeps those as bcrypt in
---    auth.users, in a schema this app has never been granted access to.
+-- 3. There is no admin yet, so promote yourself here, once:
+--
+--      update staff
+--         set role = 'admin', status = 'approved', station_id = null
+--       where email = 'YOUR-EMAIL';
+--
+--    station_id stays null on purpose: the central admin belongs to no single
+--    branch, which is what makes the dashboard show all five.
+--
+-- 4. Sign in, set the fuel prices per branch, then have staff sign up. Approve
+--    each one and give them a branch - without a branch they can sign in but
+--    cannot sell.
