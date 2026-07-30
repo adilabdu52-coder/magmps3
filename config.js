@@ -1,5 +1,12 @@
 /* MAGPMS Cloud - Supabase connection and RPC helper.
  *
+ * PROJECT REF: lnqwooqpnlxifxeukozd
+ *
+ * Check this against the address bar before running SQL anywhere. An earlier
+ * project became unreachable because the browser was signed into a second
+ * Supabase account, and a night went on errors that all traced back to SQL
+ * landing in a database that was not this one.
+ *
  * Identity comes from Supabase Auth, not from localStorage. Every request
  * carries the signed-in user's JWT, so the database knows who is calling and
  * which station they belong to. No function takes a caller id as a parameter.
@@ -10,8 +17,8 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-export const SUPABASE_URL = "https://vpakcpketkuuwmnmritg.supabase.co";
-export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_dWTbItoNrx0zaAFXlHXzKA_Zp_kk2a9";
+export const SUPABASE_URL = "https://lnqwooqpnlxifxeukozd.supabase.co";
+export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_jx1fPpU3BWbWpqtnrox_eA_qdTB-O4F";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }

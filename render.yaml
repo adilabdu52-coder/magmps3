@@ -51,7 +51,7 @@ services:
           style-src 'self' 'unsafe-inline';
           img-src 'self' data:;
           font-src 'self' data:;
-          connect-src 'self' https://vpakcpketkuuwmnmritg.supabase.co wss://vpakcpketkuuwmnmritg.supabase.co https://esm.sh;
+          connect-src 'self' https://lnqwooqpnlxifxeukozd.supabase.co wss://lnqwooqpnlxifxeukozd.supabase.co https://esm.sh;
           frame-ancestors 'none';
           base-uri 'self';
           form-action 'self'

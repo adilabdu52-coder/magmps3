@@ -115,7 +115,21 @@ lock an admin out of their own dashboard.
 
 ### Status
 
-**All nine migrations have been applied to the live database.**
+**The system moved to a new Supabase project: `lnqwooqpnlxifxeukozd`.**
+
+The previous project became unreachable — the browser was signed into a second
+Supabase account, and every attempt to open it landed in a different database
+that happened to have a `staff` table too. Hours of "function does not exist"
+all traced back to that one thing.
+
+The new project is built with `fresh_install.sql` rather than migrated. Prices
+and staff accounts are re-entered; the branches and tanks are seeded by the
+script.
+
+**Before running SQL anywhere, check the ref in the address bar against
+`config.js`.** It is the single cheapest habit in this whole project.
+
+Historic, about the previous project:
 
 RLS is on for every table in `public`, `anon` and `authenticated` hold no direct
 table grants, prices are set per branch, deliveries write to their own trail,
