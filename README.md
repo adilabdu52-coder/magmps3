@@ -115,12 +115,23 @@ lock an admin out of their own dashboard.
 
 ### Status
 
-**The system moved to a new Supabase project: `lnqwooqpnlxifxeukozd`.**
+**The system moved to a new Supabase project: `fendopitdcyoefpxuevd`.**
 
-The previous project became unreachable — the browser was signed into a second
-Supabase account, and every attempt to open it landed in a different database
-that happened to have a `staff` table too. Hours of "function does not exist"
-all traced back to that one thing.
+Two projects were tried before it. The first became unreachable: the browser
+was signed into a second Supabase account, so every attempt to open it landed
+somewhere else that happened to have a `staff` table too, and hours of
+"function does not exist" all traced back to that. The second turned out to
+belong to a different application entirely — a check for two named tables
+reported it empty when it actually held `contacts, drivers, orders, payments`.
+
+**Ask what a database contains, not whether one table exists:**
+
+```sql
+select coalesce(string_agg(table_name, ', ' order by table_name), '(none)') as tables
+from information_schema.tables where table_schema = 'public';
+```
+
+`(none)` is the only answer that means a project is safe to install into.
 
 The new project is built with `fresh_install.sql` rather than migrated. Prices
 and staff accounts are re-entered; the branches and tanks are seeded by the
