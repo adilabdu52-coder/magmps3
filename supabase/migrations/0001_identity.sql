@@ -52,10 +52,27 @@ begin
     from admins a
    where a.username = s.username;
 
-  insert into staff (id, full_name, username, password_hash, role, status, created_at)
-  select a.id, a.full_name, a.username, a.password_hash, 'admin', 'approved', a.created_at
-    from admins a
-   where not exists (select 1 from staff s where s.username = a.username);
+  /* password_hash is carried across only if it is still there. 0009 drops it,
+     and a static reference to it would make this file fail the second time it
+     is run on a database that has been all the way through. A migration you
+     cannot re-run is one you have to remember the state of. */
+  if exists (select 1 from information_schema.columns
+              where table_schema = 'public' and table_name = 'staff'
+                and column_name = 'password_hash') then
+    execute $q$
+      insert into staff (id, full_name, username, password_hash, role, status, created_at)
+      select a.id, a.full_name, a.username, a.password_hash, 'admin', 'approved', a.created_at
+        from admins a
+       where not exists (select 1 from staff s where s.username = a.username)
+    $q$;
+  else
+    execute $q$
+      insert into staff (id, full_name, username, role, status, created_at)
+      select a.id, a.full_name, a.username, 'admin', 'approved', a.created_at
+        from admins a
+       where not exists (select 1 from staff s where s.username = a.username)
+    $q$;
+  end if;
 
   raise notice 'admins merged into staff';
 end $$;
@@ -77,13 +94,11 @@ as $$
   select coalesce((select role = 'admin' and status = 'approved' from current_staff()), false);
 $$;
 
--- Null for the central admin, who is not tied to a branch.
-create or replace function current_station()
-returns uuid
-language sql stable security definer set search_path = public
-as $$
-  select station_id from current_staff();
-$$;
+-- current_station() is NOT created here. It reads staff.station_id, and that
+-- column does not exist until 0002 adds it - Postgres validates a SQL function
+-- body when the function is created, so defining it now fails outright on a
+-- database that has not been through 0002 yet. It is created there instead,
+-- once the column it depends on is real.
 
 commit;
 

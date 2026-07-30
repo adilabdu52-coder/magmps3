@@ -89,6 +89,19 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------
+-- current_station(), now that staff.station_id exists
+-- ---------------------------------------------------------------
+-- Held back from 0001 on purpose: a SQL function body is validated when the
+-- function is created, so this could not be written before the column it reads.
+-- Null for the central admin, who is not tied to a branch.
+create or replace function current_station()
+returns uuid
+language sql stable security definer set search_path = public
+as $$
+  select station_id from current_staff();
+$$;
+
+-- ---------------------------------------------------------------
 -- prices are per branch now
 -- ---------------------------------------------------------------
 -- Before this, one row per fuel type meant setting the diesel price changed
