@@ -1,11 +1,18 @@
 /* MAGPMS Cloud - Supabase connection and RPC helper.
  *
- * PROJECT REF: lnqwooqpnlxifxeukozd
+ * PROJECT REF: fendopitdcyoefpxuevd
  *
- * Check this against the address bar before running SQL anywhere. An earlier
- * project became unreachable because the browser was signed into a second
- * Supabase account, and a night went on errors that all traced back to SQL
- * landing in a database that was not this one.
+ * Check this against the address bar before running SQL anywhere.
+ *
+ * This is the third project this app has pointed at in a day. The first became
+ * unreachable - the browser was signed into a second Supabase account. The
+ * second turned out to belong to a different application entirely; a check for
+ * two named tables reported it empty when it was full of someone else's.
+ *
+ * The check that actually works asks what IS there, not whether one thing is:
+ *
+ *   select coalesce(string_agg(table_name, ', ' order by table_name), '(none)')
+ *     from information_schema.tables where table_schema = 'public';
  *
  * Identity comes from Supabase Auth, not from localStorage. Every request
  * carries the signed-in user's JWT, so the database knows who is calling and
@@ -17,8 +24,8 @@
  */
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-export const SUPABASE_URL = "https://lnqwooqpnlxifxeukozd.supabase.co";
-export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_jx1fPpU3BWbWpqtnrox_eA_qdTB-O4F";
+export const SUPABASE_URL = "https://fendopitdcyoefpxuevd.supabase.co";
+export const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_qVxWQXxOCfLSxWAF1mg1Gg_odcPAs1o";
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true }

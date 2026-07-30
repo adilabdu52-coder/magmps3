@@ -233,7 +233,7 @@ commit;
 --   // create-auth-users.mjs
 --   import { createClient } from "@supabase/supabase-js";
 --   const db = createClient(
---     "https://lnqwooqpnlxifxeukozd.supabase.co",
+--     "https://fendopitdcyoefpxuevd.supabase.co",
 --     process.env.SERVICE_ROLE_KEY               // export it, do not inline it
 --   );
 --
