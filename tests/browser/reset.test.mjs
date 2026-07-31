@@ -46,9 +46,22 @@ export function createClient() {
         log("updateUser", a.password);
         return { error: cfg.updateError ? { message: cfg.updateError } : null };
       },
-      signUp: async () => ({ error: cfg.signupError ? { message: cfg.signupError } : null })
+      /* signUp returns a session only when the project does not ask for
+         e-mail confirmation. With confirmation on it hands back a user and
+         NO session - that difference is the whole of section [7]. */
+      signUp: async () => ({
+        data: cfg.signupData ?? { user: { id: "u1" }, session: { access_token: "stub" } },
+        error: cfg.signupError ? { message: cfg.signupError } : null
+      })
     },
-    rpc: async (fn) => { log(fn); return { data: [], error: null }; }
+    /* register_staff answers with a JSON body whether it succeeded or
+       refused, so the stub must be able to return a refusal that is not an
+       error. Returning [] for every RPC hid exactly the failure the page was
+       meant to catch. */
+    rpc: async (fn) => {
+      log(fn);
+      return { data: (cfg.rpcResult && fn in cfg.rpcResult) ? cfg.rpcResult[fn] : [], error: null };
+    }
   };
 }`;
 
@@ -267,6 +280,77 @@ console.log("\n[6] errors read as sentences, not JSON");
     document.querySelector("#fgMsg").textContent.length > 0, null, { timeout: 5000 });
   const t = await page.locator("#fgMsg").textContent();
   ok("a genuine message is not swallowed", t.includes("invalid format"), t);
+  await ctx.close();
+}
+
+console.log("\n[7] a signup that only looks successful");
+
+/* This is the failure that cost a day. register_staff refuses by RETURNING
+   {success:false}, which is a successful call carrying JSON - rpc() does not
+   throw, so a caller that ignores the result prints "Account created" over a
+   signup that created no staff row. Nothing showed it until the account was
+   promoted and matched zero rows. */
+const signup = async (page, email = "a@b.com") => {
+  await page.click("#toSignup");
+  await page.fill("#suName", "Abebe Kebede");
+  await page.fill("#suEmail", email);
+  await page.fill("#suPass", "password123");
+  await page.click("#suBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#suMsg").textContent.length > 0, null, { timeout: 5000 });
+  return page.locator("#suMsg").textContent();
+};
+
+{ // confirm-email on: a user, no session, so auth.uid() is null in the function
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
+    signupData: { user: { id: "u1" }, session: null },
+    rpcResult: { register_staff: { success: false, message: "not authenticated" } }
+  });
+  const t = await signup(page);
+  ok("a refused registration is never called success", !/Account created/i.test(t), t);
+  ok("it says the login exists but the record does not", /staff record was not/i.test(t), t);
+  ok("it names e-mail confirmation as the cause", /confirmation/i.test(t), t);
+  /* Signing up again cannot work - the address is taken, so the second
+     attempt fails at signUp instead, and the person is no better off. */
+  ok("and does not invite a retry that cannot work", /do not sign up again/i.test(t), t);
+  ok("the message is not raw JSON", !t.includes("success") && !t.includes("{"), t);
+  await ctx.close();
+}
+
+{ // signing up twice on an account that already has its staff row
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
+    rpcResult: { register_staff: { success: false, message: "account already registered" } }
+  });
+  const t = await signup(page);
+  ok("an existing account is not reported as created", !/Account created/i.test(t), t);
+  ok("and points at approval, which is what is actually missing",
+     /already exists/i.test(t) && /approve/i.test(t), t);
+  await ctx.close();
+}
+
+{ // the ordinary path still works
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
+    rpcResult: { register_staff: { success: true, message: "awaiting admin approval" } }
+  });
+  const t = await signup(page);
+  ok("a real signup still says so", /Account created/i.test(t), t);
+  ok("and still asks for approval", /approve/i.test(t), t);
+  ok("the form is cleared afterwards",
+     await page.evaluate(() => document.getElementById("suEmail").value === ""));
+  await ctx.close();
+}
+
+{ // an unrecognised refusal is passed through rather than swallowed
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
+    rpcResult: { register_staff: { success: false, message: "phone already in use" } }
+  });
+  const t = await signup(page);
+  ok("an unknown refusal reaches the screen", /phone already in use/i.test(t), t);
+  ok("and is not dressed up as success", !/Account created/i.test(t), t);
   await ctx.close();
 }
 
