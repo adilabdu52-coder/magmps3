@@ -65,6 +65,18 @@ const NO_BRANCH = {
   station_id: null, station_name: null
 };
 
+const SALES = [
+  { id: "s1", fuel_type: "Diesel", liters: 30, total_etb: 3000, payment_method: "cash",
+    voided: false, created_at: new Date().toISOString() },
+  { id: "s2", fuel_type: "Diesel", liters: 20, total_etb: 2000, payment_method: "credit",
+    voided: false, created_at: new Date().toISOString() },
+  { id: "s3", fuel_type: "Benzil", liters: 10, total_etb: 900, payment_method: "cash",
+    voided: false, created_at: new Date().toISOString() },
+  // Voided sales must not count towards anything.
+  { id: "s4", fuel_type: "Benzil", liters: 999, total_etb: 99900, payment_method: "cash",
+    voided: true, created_at: new Date().toISOString() }
+];
+
 console.log("\n[1] a cashier with a branch");
 
 {
@@ -77,7 +89,82 @@ console.log("\n[1] a cashier with a branch");
   await ctx.close();
 }
 
-console.log("\n[2] a cashier approved without a branch");
+console.log("\n[2] My Day answers the questions a cashier actually has");
+
+{
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: {
+      list_tanks: TANKS,
+      my_sales_today: SALES,
+      get_prices: [{ fuel_type: "Diesel", price_per_liter: 100 },
+                   { fuel_type: "Benzil", price_per_liter: 90 }],
+      my_open_shift: [],
+      my_attendance_status: []
+    }
+  });
+  await page.waitForFunction(() =>
+    document.querySelector("#myCount").textContent !== "0", null, { timeout: 5000 });
+
+  ok("takings exclude voided sales",
+     (await page.locator("#mySales").textContent()) === "5,900",
+     await page.locator("#mySales").textContent());
+  ok("litres exclude them too",
+     (await page.locator("#myLiters").textContent()) === "60",
+     await page.locator("#myLiters").textContent());
+  ok("the sale count is the live ones",
+     (await page.locator("#myCount").textContent()) === "3",
+     await page.locator("#myCount").textContent());
+  /* Credit is what is not in the drawer at the end of the day. */
+  ok("credit is broken out on its own",
+     (await page.locator("#myCredit").textContent()) === "2,000",
+     await page.locator("#myCredit").textContent());
+
+  const fuel = await page.locator("#myByFuel").textContent();
+  ok("fuels are broken down", /Diesel/.test(fuel) && /Benzil/.test(fuel), fuel);
+  ok("busiest fuel first",
+     (await page.locator("#myByFuel tr").first().textContent()).includes("Diesel"));
+  ok("voided litres are not in the breakdown", !/999/.test(fuel), fuel);
+
+  ok("prices are on My Day too",
+     (await page.locator("#dashPrices").textContent()).includes("Diesel"));
+
+  /* Without an open shift nothing can be sold, so it belongs on the first
+     screen rather than two taps away. */
+  ok("the shift warning is on My Day",
+     (await page.locator("#dashShift").textContent()).includes("No open shift"));
+  ok("so is attendance",
+     (await page.locator("#dashAtt").textContent()).includes("Not checked in"));
+
+  // 30000/50000 is 60%, so nothing is low and the card stays away.
+  ok("no low-tank card when nothing is low", await page.locator("#lowTankCard").isHidden());
+  await ctx.close();
+}
+
+console.log("\n[3] a tank running low is surfaced before a customer finds it");
+
+{
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: {
+      list_tanks: [
+        { id: 1, station_id: "s-adama", tank_name: "Tank 1", fuel_type: "Benzil",
+          current_liters: 4000, capacity_liters: 50000 },   // 8% - reorder
+        { id: 2, station_id: "s-adama", tank_name: "Tank 2", fuel_type: "Diesel",
+          current_liters: 40000, capacity_liters: 50000 }   // 80% - fine
+      ],
+      my_sales_today: []
+    }
+  });
+  await page.waitForFunction(() =>
+    !document.getElementById("lowTankCard").classList.contains("hidden"), null, { timeout: 5000 });
+  const low = await page.locator("#lowTankList").textContent();
+  ok("the low tank is named", /Tank 1/.test(low), low);
+  ok("the healthy one is not", !/Tank 2/.test(low), low);
+  await ctx.close();
+}
+
+console.log("\n[4] a cashier approved without a branch");
 
 /* This is what happens when someone is approved before being given a branch.
    Every panel comes back empty, because list_tanks and get_prices filter on
@@ -104,7 +191,7 @@ console.log("\n[2] a cashier approved without a branch");
   await ctx.close();
 }
 
-console.log("\n[3] a branch whose tanks really are missing");
+console.log("\n[5] a branch whose tanks really are missing");
 
 /* Same empty result, different cause, different sentence. */
 {
