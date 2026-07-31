@@ -35,6 +35,15 @@
 
 <div class="wrap">
 
+<!-- Someone approved without a branch can sign in and then do nothing: no
+     tanks, no prices, and every sale refused. Each panel said something
+     different and none of them said why, so the app looked broken. This says
+     it once, at the top, on every page. -->
+<div class="msg error hidden" id="noBranchBanner">
+  You have not been given a branch yet, so you cannot record sales.
+  Ask the manager to assign yours.
+</div>
+
 <!-- ===== MY DAY ===== -->
 <div class="section show" id="sec-dashboard">
   <h1 class="display">My Day</h1>
@@ -293,7 +302,16 @@ async function loadTanks() {
     const rows = await rpc("list_tanks");
     const el = $("tankList");
     if (!Array.isArray(rows) || rows.length === 0) {
-      el.className = "empty"; el.textContent = "No tanks configured"; return;
+      el.className = "empty";
+      /* list_tanks filters on current_station() for anyone who is not an
+         admin, so no branch means no rows - which is not the same thing as
+         a branch whose tanks have not been set up. Saying "No tanks
+         configured" to someone with no branch sends them to look at the
+         tanks, which are fine. */
+      el.textContent = staff && !staff.station_id
+        ? "No branch assigned yet - ask the manager"
+        : "No tanks configured for this branch";
+      return;
     }
     el.className = "";
     el.innerHTML = rows.map(tankRow).join("");
@@ -386,6 +404,7 @@ function refreshAll() { loadMyDay(); loadPrices(); loadTanks(); checkShift(); at
   $("stationLine").textContent = where;
   $("menuStation").textContent = where;
   $("tankSub").textContent = where;
+  $("noBranchBanner").classList.toggle("hidden", !!staff.station_id);
 
   $("loading").style.display = "none";
   $("app").style.display = "block";

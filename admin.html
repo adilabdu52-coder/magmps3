@@ -492,10 +492,21 @@ async function savePrices() {
   const bad = edits.find(e => !(e.price > 0));
   if (bad) { msg("priceMsg", `Enter a valid price for ${bad.fuel}`, "error"); return; }
 
+  /* Prices are per branch, so there is no such thing as setting one for "All
+     sites". This used to pass `selected` straight through, which on the All
+     sites view is the literal string "all" - not a uuid. PostgREST rejected
+     it, the catch below reported "Connection error", and the real problem
+     (no branch chosen) never reached the screen. */
+  const station = stationParam();
+  if (!station) {
+    msg("priceMsg", "Choose a branch first - prices are set per branch, not for all sites", "error");
+    return;
+  }
+
   const btn = $("priceBtn"); btn.disabled = true;
   try {
     const res = await Promise.all(edits.map(e =>
-      rpc("admin_set_price", { p_station_id: selected, p_fuel_type: e.fuel, p_price: e.price })));
+      rpc("admin_set_price", { p_station_id: station, p_fuel_type: e.fuel, p_price: e.price })));
     const failed = edits.filter((e, i) => !res[i].success).map(e => e.fuel);
     const ok = failed.length === 0;
     msg("priceMsg", ok ? "Prices updated" : `Could not update ${failed.join(", ")}`, ok ? "success" : "error");
