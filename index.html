@@ -158,25 +158,21 @@ $("loginCard").addEventListener("submit", async e => {
 });
 
 /* Turns register_staff's refusal into something the person holding the phone
-   can act on. The distinction that matters is whether signUp handed back a
-   session: without one there is now a login with no staff record behind it,
-   and signing up again will not fix it - the address is taken, so the second
-   attempt fails at signUp instead. That needs a manager, so say so plainly
-   rather than inviting a retry that cannot work. */
-function registerFailure(message, signUpData) {
+   can act on.
+
+   'not authenticated' no longer appears on the normal path: the no-session
+   case returns before this is reached, because 0010's trigger has already
+   made the staff row and there is nothing to report. It is kept for a
+   database that has not been through 0010, where the old failure is still
+   possible and still needs explaining. */
+function registerFailure(message) {
   if (message === "account already registered")
     return "This account already exists. Ask the manager to approve it.";
 
-  if (message === "not authenticated") {
-    if (signUpData && !signUpData.session)
-      return "Your login was created, but the staff record was not, because " +
-             "this project still asks for e-mail confirmation. Do not sign up " +
-             "again - show this message to the manager, who must turn " +
-             "confirmation off and finish the account.";
+  if (message === "not authenticated")
     return "Your login was created, but the staff record was not. Show this " +
            "message to the manager - the account needs finishing before you " +
            "can sign in.";
-  }
 
   return message || "Could not create the staff record. Tell the manager.";
 }
@@ -192,33 +188,49 @@ $("signupCard").addEventListener("submit", async e => {
   const btn = $("suBtn");
   btn.disabled = true; btn.textContent = "Creating...";
   try {
+    const phone = $("suPhone").value.trim();
+
+    /* The name and phone go in as user metadata so the DATABASE can build the
+       staff row: 0010 puts a trigger on auth.users that reads exactly these
+       two keys. That is what makes a signup work whether or not the browser
+       is handed a session - and being handed one is not the browser's
+       decision, it is a project setting. */
     const { data: signUpData, error } = await supabase.auth.signUp({
       email: $("suEmail").value.trim(),
-      password: pass
+      password: pass,
+      options: { data: { full_name: name, phone } }
     });
     if (error) {
       msg("suMsg", authMessage(error, "Could not create the account"), "error");
       return;
     }
 
-    /* The auth user exists; this creates the staff row against it. Status is
-       pending and station is null - an admin assigns both.
+    /* No session means the project asks for e-mail confirmation. The staff
+       row already exists - the trigger made it - so there is nothing to call
+       and nothing to repair. Say what is actually left to do, which is the
+       confirmation e-mail, and do not call register_staff: without a session
+       it can only fail, and reporting that failure would be a lie about a
+       row that is sitting in the table. */
+    if (!signUpData?.session) {
+      msg("suMsg", "Account created. Open the confirmation e-mail we just " +
+                   "sent, then an admin must approve you before you can sign in.",
+          "success");
+      toast("Account created ✔", "ok");
+      ["suName", "suPhone", "suEmail", "suPass"].forEach(i => { $(i).value = ""; });
+      return;
+    }
 
-       register_staff reports refusal in its RETURN VALUE, not as an error:
-       {success:false, message:'not authenticated'}. To PostgREST that is a
-       successful call returning JSON, so rpc() does not throw. Ignoring the
-       result - which this did - printed "Account created" over the top of a
-       signup that created no staff row at all, and the only visible symptom
-       came days later, when promoting the account matched zero rows.
+    /* With a session, this fills in anything the trigger could not and is
+       the belt to its braces on a database that predates 0010.
 
-       The case that triggers it is not exotic. With "Confirm email" on,
-       signUp returns a user and NO session, so auth.uid() is null inside the
-       function. Every staff member would hit this. */
-    const reg = await rpc("register_staff", {
-      p_full_name: name, p_phone: $("suPhone").value.trim()
-    });
+       It still has to be checked. register_staff reports refusal in its
+       RETURN VALUE - {success:false, message:...} - which to PostgREST is a
+       successful call carrying JSON, so rpc() does not throw. Discarding the
+       result is what printed "Account created" over a signup that created
+       nothing, and hid it until the account was promoted days later. */
+    const reg = await rpc("register_staff", { p_full_name: name, p_phone: phone });
     if (reg && reg.success === false) {
-      msg("suMsg", registerFailure(reg.message, signUpData), "error");
+      msg("suMsg", registerFailure(reg.message), "error");
       return;
     }
 
