@@ -472,23 +472,63 @@ async function loadPrices() {
   }
   $("priceBtn").disabled = false;
   try {
-    const rows = await rpc("get_prices", { p_station_id: selected });
-    if (!Array.isArray(rows) || !rows.length) {
-      box.className = "empty"; box.textContent = "No fuels configured"; priceFuels = []; return;
+    /* The form used to be built from get_prices alone, which meant it could
+       only ever EDIT a price that already existed. A branch with no prices
+       yet rendered no inputs and read "No fuels configured", so there was no
+       way to set its first price at all - the branch simply could not be
+       made to trade. That is what "the admin page does not update price"
+       turned out to be.
+
+       A branch sells what its tanks hold, so the tanks are the real source
+       of the fuel list. Prices are laid over the top, and a fuel with no
+       price yet appears as a blank box waiting to be filled. */
+    const [priced, tanks] = await Promise.all([
+      rpc("get_prices", { p_station_id: selected }),
+      rpc("list_tanks",  { p_station_id: selected })
+    ]);
+
+    const current = new Map(
+      (Array.isArray(priced) ? priced : []).map(p => [p.fuel_type, p.price_per_liter]));
+    const fuels = [...new Set([
+      ...(Array.isArray(tanks) ? tanks.map(t => t.fuel_type) : []),
+      ...current.keys()
+    ])].filter(Boolean).sort();
+
+    if (!fuels.length) {
+      box.className = "empty";
+      /* Distinguish the two ways of arriving here. A branch with no tanks
+         cannot sell anything and needs tanks, not prices. */
+      box.textContent = Array.isArray(tanks) && tanks.length === 0
+        ? "This branch has no tanks yet, so there are no fuels to price"
+        : "No fuels configured";
+      priceFuels = [];
+      return;
     }
-    priceFuels = rows.map(r => r.fuel_type);
+
+    priceFuels = fuels;
     box.className = "grid2";
-    box.innerHTML = rows.map(p =>
-      `<div class="field"><label>${esc(p.fuel_type)}</label>
-        <input type="number" data-fuel="${esc(p.fuel_type)}" step="0.01" min="0"
-               inputmode="decimal" value="${esc(p.price_per_liter)}"/></div>`).join("");
+    box.innerHTML = fuels.map(f => {
+      const has = current.has(f);
+      return `<div class="field"><label>${esc(f)}${has ? "" : " — not priced yet"}</label>
+        <input type="number" data-fuel="${esc(f)}" step="0.01" min="0"
+               inputmode="decimal" placeholder="${has ? "" : "set a price"}"
+               value="${has ? esc(current.get(f)) : ""}"/></div>`;
+    }).join("");
   } catch (e) { failPanel("priceFields", "prices"); loadFailed("loadPrices", e); }
 }
 
 async function savePrices() {
   const inputs = [...document.querySelectorAll('#priceFields input[data-fuel]')];
   if (!inputs.length) { msg("priceMsg", "No fuels to update", "error"); return; }
-  const edits = inputs.map(i => ({ fuel: i.getAttribute("data-fuel"), price: parseFloat(i.value) }));
+
+  /* A fuel left blank is skipped, not rejected. With unpriced fuels now
+     shown as empty boxes, demanding a value in every one of them would stop
+     you setting the two you know while you go and find the third. */
+  const edits = inputs
+    .filter(i => i.value.trim() !== "")
+    .map(i => ({ fuel: i.getAttribute("data-fuel"), price: parseFloat(i.value) }));
+
+  if (!edits.length) { msg("priceMsg", "Enter at least one price", "error"); return; }
   const bad = edits.find(e => !(e.price > 0));
   if (bad) { msg("priceMsg", `Enter a valid price for ${bad.fuel}`, "error"); return; }
 
@@ -510,7 +550,9 @@ async function savePrices() {
     const failed = edits.filter((e, i) => !res[i].success).map(e => e.fuel);
     const ok = failed.length === 0;
     msg("priceMsg", ok ? "Prices updated" : `Could not update ${failed.join(", ")}`, ok ? "success" : "error");
-    if (ok) { toast("Prices updated ✔", "ok"); loadHistory(); }
+    /* Reload the form, not just the history: a fuel that was blank a moment
+       ago now has a price, and its "not priced yet" label has to go. */
+    if (ok) { toast("Prices updated ✔", "ok"); loadPrices(); loadHistory(); }
   } catch (e) { msg("priceMsg", "Connection error", "error"); loadFailed("savePrices", e); }
   finally { btn.disabled = false; }
 }

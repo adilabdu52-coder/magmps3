@@ -84,6 +84,7 @@ const DATA = {
       role: "operator", status: "pending", station_id: null }
   ],
   admin_set_staff_status: { success: true, message: "staff approved" },
+  admin_set_price: { success: true, message: "price updated" },
   list_deliveries: [],
   list_credit_customers: [],
   list_expenses: [],
@@ -107,7 +108,11 @@ export function createClient() {
     rpc: async (fn, params) => {
       window.__calls.push(fn);
       if (window.__fail[fn]) return { data: null, error: { message: "stubbed failure", code: "X" } };
-      return { data: DATA[fn] === undefined ? [] : DATA[fn], error: null };
+      // __override lets one test change what a single RPC returns, which is
+      // how a branch with tanks but no prices can be represented at all.
+      const ov = window.__override || {};
+      const d = fn in ov ? ov[fn] : (DATA[fn] === undefined ? [] : DATA[fn]);
+      return { data: d, error: null };
     }
   };
 }`;
@@ -246,6 +251,77 @@ await page.waitForFunction(() =>
 const toastText = await page.locator("#toastHost .toast").last().textContent();
 ok("approving without a branch warns immediately", /give Hana Tesfaye a branch/i.test(toastText), toastText);
 ok("and says why it matters", /cannot sell/i.test(toastText), toastText);
+
+console.log("\n[8] a branch can be given its first price");
+
+/* The form used to be built from get_prices alone, so it could only EDIT a
+   price that already existed. A branch with none rendered no inputs and read
+   "No fuels configured" - there was no way to set a first price, and that
+   branch could never trade. Found on the live system with a cashier assigned
+   to a branch that had never been priced. */
+await page.click('#rail [data-site="s-adama"]');
+
+{ // tanks, but nothing priced yet
+  await page.evaluate(() => {
+    window.__override = {
+      get_prices: [],
+      list_tanks: [
+        { id: 1, station_id: "s-adama", tank_name: "T1", fuel_type: "Diesel",
+          current_liters: 100, capacity_liters: 1000 },
+        { id: 2, station_id: "s-adama", tank_name: "T2", fuel_type: "Benzil",
+          current_liters: 100, capacity_liters: 1000 }
+      ]
+    };
+  });
+  await page.click('.mi[data-s="sales"]');
+  await page.click('.mi[data-s="prices"]');
+  await page.waitForFunction(() =>
+    document.querySelectorAll('#priceFields input[data-fuel]').length > 0, null, { timeout: 5000 });
+
+  const fuels = await page.locator('#priceFields input[data-fuel]').evaluateAll(
+    els => els.map(e => e.getAttribute("data-fuel")));
+  ok("a box appears for every fuel the branch stocks",
+     fuels.length === 2 && fuels.includes("Diesel") && fuels.includes("Benzil"), JSON.stringify(fuels));
+
+  const values = await page.locator('#priceFields input[data-fuel]').evaluateAll(
+    els => els.map(e => e.value));
+  ok("and they start empty, waiting to be filled", values.every(v => v === ""), JSON.stringify(values));
+  ok("the label says it has no price yet",
+     (await page.locator("#priceFields").textContent()).includes("not priced yet"));
+  ok("the save button is available", !(await page.locator("#priceBtn").isDisabled()));
+
+  // One filled, one left blank: save what is known, do not block on the rest.
+  await page.fill('#priceFields input[data-fuel="Diesel"]', "95");
+  await page.click("#priceBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#priceMsg").textContent.length > 0, null, { timeout: 5000 });
+  const m = await page.locator("#priceMsg").textContent();
+  ok("a partly filled form still saves", /updated/i.test(m), m);
+
+  // Nothing filled at all is a different answer.
+  await page.evaluate(() => {
+    document.querySelectorAll('#priceFields input[data-fuel]').forEach(i => { i.value = ""; });
+  });
+  await page.click("#priceBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#priceMsg").textContent.includes("at least one"), null, { timeout: 5000 });
+  ok("an empty form asks for at least one price",
+     (await page.locator("#priceMsg").textContent()).includes("at least one"));
+}
+
+{ // no tanks either: the branch needs tanks, not prices
+  await page.evaluate(() => { window.__override = { get_prices: [], list_tanks: [] }; });
+  // Sections only refetch when the branch changes, so switch branch rather
+  // than tab - switching tabs alone would re-show the cached render.
+  await page.click('#rail [data-site="s-evil"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#priceFields").textContent.includes("no tanks"), null, { timeout: 5000 });
+  const t = await page.locator("#priceFields").textContent();
+  ok("a branch with no tanks says so", /no tanks yet/i.test(t), t);
+  ok("and does not blame the fuels", !/No fuels configured/i.test(t), t);
+}
+
+await page.evaluate(() => { window.__override = {}; });
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
 
