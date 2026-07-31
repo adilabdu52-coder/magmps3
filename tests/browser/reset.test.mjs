@@ -49,10 +49,13 @@ export function createClient() {
       /* signUp returns a session only when the project does not ask for
          e-mail confirmation. With confirmation on it hands back a user and
          NO session - that difference is the whole of section [7]. */
-      signUp: async () => ({
-        data: cfg.signupData ?? { user: { id: "u1" }, session: { access_token: "stub" } },
-        error: cfg.signupError ? { message: cfg.signupError } : null
-      })
+      signUp: async (a) => {
+        log("signUp", a.email, a.options && a.options.data);
+        return {
+          data: cfg.signupData ?? { user: { id: "u1" }, session: { access_token: "stub" } },
+          error: cfg.signupError ? { message: cfg.signupError } : null
+        };
+      }
     },
     /* register_staff answers with a JSON body whether it succeeded or
        refused, so the stub must be able to return a refusal that is not an
@@ -293,6 +296,7 @@ console.log("\n[7] a signup that only looks successful");
 const signup = async (page, email = "a@b.com") => {
   await page.click("#toSignup");
   await page.fill("#suName", "Abebe Kebede");
+  await page.fill("#suPhone", "0912345678");
   await page.fill("#suEmail", email);
   await page.fill("#suPass", "password123");
   await page.click("#suBtn");
@@ -301,19 +305,51 @@ const signup = async (page, email = "a@b.com") => {
   return page.locator("#suMsg").textContent();
 };
 
-{ // confirm-email on: a user, no session, so auth.uid() is null in the function
+{ /* The name and phone must reach signUp as metadata, because 0010's trigger
+     on auth.users is what actually builds the staff row and those two keys
+     are all it has to build it from. Send nothing and the row still appears,
+     but nameless - which is how a staff list fills up with blank rows. */
   const { page, ctx } = await open(`${BASE}/index.html`, {
     session: null,
-    signupData: { user: { id: "u1" }, session: null },
+    rpcResult: { register_staff: { success: true, message: "awaiting admin approval" } }
+  });
+  await signup(page);
+  const call = (await calls(page)).find(c => c[0] === "signUp");
+  ok("the name is sent as metadata for the trigger",
+     call && call[2] && call[2].full_name === "Abebe Kebede", JSON.stringify(call));
+  ok("and the phone with it",
+     call && call[2] && call[2].phone === "0912345678", JSON.stringify(call));
+  await ctx.close();
+}
+
+{ /* Confirmation on: a user and no session. Before 0010 this was the bug -
+     no session meant no staff row. Now the trigger has already made it, so
+     the only thing left undone is the confirmation e-mail, and that is what
+     the message should be about. */
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
+    signupData: { user: { id: "u1" }, session: null }
+  });
+  const t = await signup(page);
+  ok("a confirmed-by-e-mail signup is still a created account", /Account created/i.test(t), t);
+  ok("and says what is left to do", /confirmation e-mail/i.test(t), t);
+  ok("and still mentions approval", /approve/i.test(t), t);
+  /* Calling it without a session could only return 'not authenticated', and
+     reporting that would be a lie about a row that exists. */
+  ok("register_staff is not called without a session",
+     !JSON.stringify(await calls(page)).includes("register_staff"),
+     JSON.stringify(await calls(page)));
+  await ctx.close();
+}
+
+{ // a database that predates 0010: no trigger, no session, nothing created
+  const { page, ctx } = await open(`${BASE}/index.html`, {
+    session: null,
     rpcResult: { register_staff: { success: false, message: "not authenticated" } }
   });
   const t = await signup(page);
-  ok("a refused registration is never called success", !/Account created/i.test(t), t);
+  ok("an old database's refusal is never called success", !/Account created/i.test(t), t);
   ok("it says the login exists but the record does not", /staff record was not/i.test(t), t);
-  ok("it names e-mail confirmation as the cause", /confirmation/i.test(t), t);
-  /* Signing up again cannot work - the address is taken, so the second
-     attempt fails at signUp instead, and the person is no better off. */
-  ok("and does not invite a retry that cannot work", /do not sign up again/i.test(t), t);
   ok("the message is not raw JSON", !t.includes("success") && !t.includes("{"), t);
   await ctx.close();
 }
