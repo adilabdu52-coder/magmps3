@@ -31,6 +31,7 @@
   <div class="mi" data-s="shift"><span class="ic">🕒</span> Shift</div>
   <div class="mi" data-s="inventory"><span class="ic">🛢</span> Tanks</div>
   <div class="mi" data-s="attendance"><span class="ic">✅</span> Attendance</div>
+  <div class="mi" data-s="report"><span class="ic">🛠</span> Report a Mistake</div>
 </nav>
 
 <div class="wrap">
@@ -192,6 +193,47 @@
   </div>
 </div>
 
+<!-- ===== REPORT A MISTAKE ===== -->
+<!-- A saved sale cannot be edited by the person who made it, and should not
+     be. But a cashier who types 1000 instead of 100 knows within seconds, and
+     until now could do nothing but tell someone and hope. This is the path
+     from noticing to it being put right. -->
+<div class="section" id="sec-report">
+  <h1 class="display">Report a Mistake</h1>
+  <div class="sub">Wrong amount on a sale you recorded</div>
+  <div class="card">
+    <div class="field-hint" style="margin-bottom:12px">
+      You cannot change a sale yourself — that is what keeps the till
+      trustworthy. Report it here and the manager decides. Say what happened
+      even if you are not sure of the right figure.
+    </div>
+    <div class="field">
+      <label for="rpSale">Which sale</label>
+      <select id="rpSale"><option value="">Loading…</option></select>
+    </div>
+    <div class="field">
+      <label for="rpLiters">Correct litres (leave blank if unsure)</label>
+      <input type="number" id="rpLiters" min="0" step="0.01" inputmode="decimal"/>
+    </div>
+    <div class="field">
+      <label for="rpReason">What went wrong</label>
+      <input type="text" id="rpReason" placeholder="Typed 1000 instead of 100"/>
+    </div>
+    <button class="btn btn-gold" id="rpBtn" style="width:100%;padding:12px">🛠 Report it</button>
+    <div class="msg" id="rpMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>My Reports</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>When</th><th>Fuel</th><th>Reason</th><th>Status</th></tr></thead>
+        <tbody id="rpList"><tr><td colspan="4" class="empty">Nothing reported</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 </div>
 
 <nav class="bottom-nav">
@@ -343,6 +385,10 @@ async function loadMyDay() {
           <td class="mono">${fmt.int(f.n)}</td></tr>`).join("")
       : '<tr><td colspan="4" class="empty">No sales yet today</td></tr>';
 
+    /* The report form chooses from these same sales, so it is filled here
+       rather than fetching the day's sales a second time. */
+    fillSaleChoices(live);
+
     $("myTx").innerHTML = live.length
       ? live.slice(0, 20).map(s => `<tr>
           <td class="mono">${esc(fmt.time(s.created_at))}</td>
@@ -437,6 +483,67 @@ async function attStatus() {
   } catch (e) { loadFailed("attStatus", e); }
 }
 
+/* ---------- reporting a wrong sale ---------- */
+/* The list of sales to choose from is today's own sales, which is the same
+   data My Day already holds. Anything older is a conversation with the
+   manager rather than a form. */
+function fillSaleChoices(sales) {
+  const sel = $("rpSale");
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = sales.length
+    ? sales.map(s => `<option value="${esc(s.id)}">${esc(fmt.time(s.created_at))} · ${esc(s.fuel_type)} · ${fmt.int(s.liters)} L · ${fmt.money(s.total_etb)} ETB</option>`).join("")
+    : '<option value="">No sales today to report</option>';
+  if (sales.some(s => s.id === keep)) sel.value = keep;
+}
+
+async function loadMyReports() {
+  try {
+    const rows = await rpc("my_corrections", { p_limit: 20 }) || [];
+    $("rpList").innerHTML = rows.length
+      ? rows.map(c => {
+          const done = c.status === "fixed" && c.old_liters != null
+            ? ` (${fmt.int(c.old_liters)} → ${fmt.int(c.new_liters)} L)` : "";
+          return `<tr>
+            <td class="mono">${esc(fmt.stamp(c.reported_at))}</td>
+            <td>${esc(c.fuel_type || "")}</td>
+            <td>${esc(c.reason || "")}</td>
+            <td><span class="tag ${c.status === "fixed" ? "approved" : c.status === "rejected" ? "rejected" : "pending"}">${esc(c.status)}</span>${esc(done)}</td></tr>`;
+        }).join("")
+      : '<tr><td colspan="4" class="empty">Nothing reported</td></tr>';
+  } catch (e) { loadFailed("loadMyReports", e); }
+}
+
+async function submitReport() {
+  const saleId = $("rpSale").value;
+  const reason = $("rpReason").value.trim();
+  if (!saleId) { msg("rpMsg", "Choose the sale that was wrong", "error"); return; }
+  if (!reason) { msg("rpMsg", "Say what went wrong", "error"); return; }
+
+  /* Blank litres is allowed on purpose. Someone who knows the sale is wrong
+     but not by how much should still be able to say so - requiring a number
+     they do not have is how a report goes unmade. */
+  const raw = $("rpLiters").value.trim();
+  const litres = raw === "" ? null : parseFloat(raw);
+  if (litres !== null && !(litres > 0)) {
+    msg("rpMsg", "Correct litres must be more than zero, or left blank", "error");
+    return;
+  }
+
+  const btn = $("rpBtn"); btn.disabled = true;
+  try {
+    const r = await rpc("report_sale_mistake",
+      { p_sale_id: saleId, p_reason: reason, p_correct_liters: litres });
+    msg("rpMsg", r.message || (r.success ? "Reported" : "Failed"), r.success ? "success" : "error");
+    if (r.success) {
+      toast("Reported ✔", "ok");
+      $("rpReason").value = ""; $("rpLiters").value = "";
+      loadMyReports();
+    }
+  } catch (e) { msg("rpMsg", "Connection error", "error"); loadFailed("submitReport", e); }
+  finally { btn.disabled = false; }
+}
+
 async function attAction(fn) {
   try {
     const r = await rpc(fn);
@@ -454,6 +561,7 @@ function bind() {
   $("closeBtn").addEventListener("click", () => shiftAction("close_shift", "closeMeter", "closing"));
   $("inBtn").addEventListener("click", () => attAction("check_in"));
   $("outBtn").addEventListener("click", () => attAction("check_out"));
+  $("rpBtn").addEventListener("click", submitReport);
   $("sFuel").addEventListener("change", liveTotal);
   $("sPay").addEventListener("change", () =>
     $("custField").classList.toggle("hidden", $("sPay").value !== "credit"));
@@ -472,7 +580,9 @@ function bind() {
   });
 }
 
-function refreshAll() { loadMyDay(); loadPrices(); loadTanks(); checkShift(); attStatus(); }
+function refreshAll() {
+  loadMyDay(); loadPrices(); loadTanks(); checkShift(); attStatus(); loadMyReports();
+}
 
 (async function init() {
   staff = await requireStaff();

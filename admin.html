@@ -34,6 +34,7 @@
   <div class="mi" data-s="credit"><span class="ic">🧾</span> Credit</div>
   <div class="mi" data-s="sales"><span class="ic">💰</span> Sales</div>
   <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
+  <div class="mi" data-s="corrections"><span class="ic">🛠</span> Corrections</div>
   <div class="mi" data-s="reports"><span class="ic">📈</span> Reports</div>
 </nav>
 
@@ -247,6 +248,30 @@
   </div>
 
   <!-- ===== EXPENSES ===== -->
+  <!-- ===== CORRECTIONS ===== -->
+  <div class="section" id="sec-corrections">
+    <h1 class="display">Corrections</h1>
+    <div class="sub" id="corrSub">Wrong amounts reported by staff, and what you decided</div>
+    <div class="card">
+      <!-- A cashier cannot edit a saved sale, and should not be able to. What
+           they can do is say it was wrong; fixing it re-adjusts tank stock and
+           the customer's credit balance, so the dashboard and the reports
+           become correct again. -->
+      <div class="field-hint" style="margin-bottom:12px">
+        Staff cannot change a sale once it is saved. When they notice a wrong
+        amount they report it here and you decide. Fixing one re-adjusts the
+        tank and the customer's balance.
+      </div>
+      <div class="tabs" id="corrTabs">
+        <button class="tab active" data-corr="open">Open</button>
+        <button class="tab" data-corr="fixed">Fixed</button>
+        <button class="tab" data-corr="rejected">Rejected</button>
+        <button class="tab" data-corr="all">All</button>
+      </div>
+      <div id="corrList" class="empty">Loading...</div>
+    </div>
+  </div>
+
   <div class="section" id="sec-expenses">
     <h1 class="display">Expenses</h1><div class="sub" id="expSub">—</div>
     <div class="card">
@@ -1009,6 +1034,55 @@ function renderSales() {
 }
 
 /* ---------- expenses ---------- */
+/* ---------- corrections ---------- */
+let allCorrections = [], corrFilter = "open";
+
+async function loadCorrections() {
+  try {
+    allCorrections = await rpc("admin_list_corrections", {
+      p_station_id: stationParam(), p_status: corrFilter, p_limit: 200
+    }) || [];
+    renderCorrections();
+  } catch (e) { failPanel("corrList", "corrections"); loadFailed("loadCorrections", e); }
+}
+
+function renderCorrections() {
+  const list = $("corrList");
+  if (!allCorrections.length) {
+    list.className = "empty";
+    list.textContent = corrFilter === "open"
+      ? "Nothing waiting — no staff have reported a wrong amount"
+      : "Nothing here";
+    return;
+  }
+  list.className = "";
+  list.innerHTML = allCorrections.map(c => {
+    const open = c.status === "open";
+    /* Show what the sale says now against what the cashier says it should
+       be. Deciding without both numbers side by side means going and
+       looking them up, which is how a report ends up ignored. */
+    const claim = c.claimed_liters != null
+      ? `<strong>${fmt.int(c.claimed_liters)} L</strong>` : "not stated";
+    const outcome = c.status === "fixed" && c.old_liters != null
+      ? ` · corrected ${fmt.int(c.old_liters)} L → ${fmt.int(c.new_liters)} L` : "";
+    return `<div class="row"><div class="info">
+      <h3>${esc(c.staff_name || "—")} · ${esc(c.fuel_type || "")}</h3>
+      <p>${esc(c.station_name || "")} · sale of ${fmt.int(c.sale_liters)} L
+         for ${fmt.money(c.sale_total)} ETB (${esc(c.payment_method || "")})
+         at ${esc(fmt.stamp(c.sale_at))}</p>
+      <p>Says it should be ${claim} — “${esc(c.reason || "")}”</p>
+      <span class="tag ${open ? "pending" : c.status === "fixed" ? "approved" : "rejected"}">${esc(c.status)}</span>
+      ${outcome ? `<span class="tag open">${esc(outcome.replace(" · ", ""))}</span>` : ""}
+      ${c.resolution_note ? `<p>Note: ${esc(c.resolution_note)}</p>` : ""}
+    </div>
+    <div style="display:grid;gap:6px;justify-items:end">
+      ${open ? `<button class="btn btn-ok" data-act="corr-fix" data-id="${esc(c.id)}"
+                        data-liters="${esc(c.claimed_liters ?? "")}">Fix</button>
+                <button class="btn btn-no" data-act="corr-reject" data-id="${esc(c.id)}">Reject</button>` : ""}
+    </div></div>`;
+  }).join("");
+}
+
 async function loadExpenses() {
   try {
     const rows = await rpc("list_expenses", { p_station_id: stationParam(), p_limit: 100 }) || [];
@@ -1075,6 +1149,33 @@ function bindRowActions() {
           if (r.success) { loadCustomers(); loadDashboard(); }
           break;
         }
+        case "corr-fix": {
+          /* The cashier's claimed figure is offered as the default, but the
+             admin types the number that goes in - they are the one who can
+             check it against the meter. */
+          const claimed = el.getAttribute("data-liters");
+          const litres = await promptNumber("Fix this sale",
+            claimed ? `The cashier says it should be ${claimed} litres. Enter the correct figure.`
+                    : "Enter the correct number of litres.",
+            "Correct litres");
+          if (litres === null || !(litres > 0)) return;
+          const r = await rpc("admin_resolve_correction",
+            { p_correction_id: id, p_action: "fix", p_correct_liters: litres });
+          toast(r.message || "Fixed", r.success ? "ok" : "err");
+          if (r.success) { loadCorrections(); loadDashboard(); } else loadCorrections();
+          break;
+        }
+        case "corr-reject": {
+          const okReject = await confirmDlg("Reject this report",
+            "The sale stays exactly as it is. Nothing moves in the tank or on the customer's balance.",
+            "Reject");
+          if (!okReject) return;
+          const r = await rpc("admin_resolve_correction",
+            { p_correction_id: id, p_action: "reject" });
+          toast(r.message || "Rejected", r.success ? "ok" : "err");
+          loadCorrections();
+          break;
+        }
         case "void-sale": {
           const ok = await confirmDlg("Void sale",
             "Void this sale? Tank stock and any credit balance are reversed.", "Void sale");
@@ -1120,6 +1221,7 @@ const LOADERS = {
   credit:    loadCustomers,
   sales:     loadSales,
   expenses:  loadExpenses,
+  corrections: loadCorrections,
   /* A report belongs to the branch and range it was run for. Clearing beats
      leaving one branch's figures sitting under another branch's heading. */
   reports:   async () => {
@@ -1221,6 +1323,16 @@ function bind() {
     staffFilter = t.getAttribute("data-filter");
     $("staffTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
     renderStaff();
+  });
+  /* The status tabs refetch rather than filter in the browser: an admin
+     opening "Fixed" wants the whole history, not the slice that happened to
+     arrive with the open ones. */
+  $("corrTabs").addEventListener("click", e => {
+    const t = e.target.closest("[data-corr]");
+    if (!t) return;
+    corrFilter = t.getAttribute("data-corr");
+    $("corrTabs").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    loadCorrections();
   });
   $("payTabs").addEventListener("click", e => {
     const t = e.target.closest("[data-pay]");

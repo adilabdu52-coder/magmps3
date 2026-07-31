@@ -206,6 +206,64 @@ console.log("\n[5] a branch whose tanks really are missing");
   await ctx.close();
 }
 
+console.log("\n[6] reporting a sale that was rung up wrong");
+
+/* A cashier cannot edit a saved sale, and should not be able to. Before this
+   there was nowhere for a mistyped one to go: they told someone verbally, or
+   it surfaced a week later as a variance nobody could explain. */
+{
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: {
+      my_sales_today: SALES,
+      list_tanks: TANKS,
+      report_sale_mistake: { success: true, message: "reported - the manager will review it" },
+      my_corrections: [
+        { id: "c1", sale_id: "s1", reported_at: new Date().toISOString(),
+          reason: "typed 1000 instead of 100", claimed_liters: 100, status: "fixed",
+          fuel_type: "Diesel", old_liters: 1000, new_liters: 100 }
+      ]
+    }
+  });
+  await page.click('.mi[data-s="report"]');
+
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#rpSale option").length > 1, null, { timeout: 5000 });
+  const opts = await page.locator("#rpSale option").allTextContents();
+  ok("only live sales can be reported", opts.length === 3, JSON.stringify(opts));
+  ok("and they are identifiable", /Diesel/.test(opts.join(" ")), JSON.stringify(opts));
+  ok("a voided sale is not offered", !/999/.test(opts.join(" ")), JSON.stringify(opts));
+
+  // A reason is required: a report with no reason is a shrug.
+  await page.click("#rpBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#rpMsg").textContent.length > 0, null, { timeout: 5000 });
+  ok("a reason is required",
+     /what went wrong/i.test(await page.locator("#rpMsg").textContent()),
+     await page.locator("#rpMsg").textContent());
+  ok("and nothing was sent",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("report_sale_mistake"));
+
+  /* Litres may be left blank. Someone who knows a sale is wrong but not by
+     how much must still be able to say so. */
+  await page.fill("#rpReason", "typed 1000 instead of 100");
+  await page.click("#rpBtn");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("report_sale_mistake"), null, { timeout: 5000 });
+  ok("a report with no litres still goes", true);
+  ok("and it is confirmed on screen",
+     /manager/i.test(await page.locator("#rpMsg").textContent()),
+     await page.locator("#rpMsg").textContent());
+  ok("the reason box is cleared for the next one",
+     (await page.locator("#rpReason").inputValue()) === "");
+
+  const mine = await page.locator("#rpList").textContent();
+  ok("the cashier can see what happened to it", /fixed/i.test(mine), mine);
+  ok("including the numbers that changed", /1,000/.test(mine) && /100/.test(mine), mine);
+
+  await ctx.close();
+}
+
 ok("no uncaught page errors anywhere", errors.length === 0, errors.join("\n        "));
 
 await browser.close();
