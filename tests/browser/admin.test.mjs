@@ -86,6 +86,16 @@ const DATA = {
   admin_set_staff_status: { success: true, message: "staff approved" },
   admin_set_price: { success: true, message: "price updated" },
   admin_resolve_correction: { success: true, message: "sale corrected" },
+  report_staff: [
+    { staff_id: "u2", staff_name: "Abebe Kebede", station_id: "s-adama", station_name: "Adama",
+      sale_count: 12, liters: 480, sales_etb: 45600, cash_etb: 40600, credit_etb: 5000,
+      voided_count: 2, days_active: 5, best_day: "2026-07-29" },
+    // A name Excel would execute, and a person with nothing voided.
+    { staff_id: "u3", staff_name: "=cmd|' /C calc'!A0", station_id: "s-evil",
+      station_name: "=cmd|' /C calc'!A0",
+      sale_count: 3, liters: 60, sales_etb: 7200, cash_etb: 7200, credit_etb: 0,
+      voided_count: 0, days_active: 2, best_day: "2026-07-28" }
+  ],
   admin_list_corrections: [
     { id: "c1", sale_id: "x1", station_id: "s-adama", station_name: "Adama",
       staff_name: "Abebe Kebede", reported_at: iso(2), reason: "typed 1000 instead of 100",
@@ -385,6 +395,51 @@ console.log("\n[9] corrections reach the admin with both numbers");
   const empty = await page.locator("#corrList").textContent();
   ok("an empty queue is good news, and says so", /no staff have reported/i.test(empty), empty);
   await page.evaluate(() => { window.__override = {}; });
+}
+
+console.log("\n[10] the staff report");
+
+{
+  await page.click('.mi[data-s="reports"]');
+  await page.click('#repQuick [data-range="7"]');
+  await page.click("#stfBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#stfBody").textContent.includes("Abebe"), null, { timeout: 5000 });
+
+  const t = await page.locator("#stfBody").textContent();
+  ok("one row per person", (await page.locator("#stfBody tr").count()) === 2);
+  ok("takings are shown", /45,600/.test(t), t);
+  /* Cash and credit split the total rather than repeating it - the pair is
+     what tells a manager how much should be in the drawer. */
+  ok("cash and credit are separated", /40,600/.test(t) && /5,000/.test(t), t);
+  ok("days active are counted", /\b5\b/.test(t), t);
+
+  /* Voided sales are out of the money but counted, and flagged. Someone
+     whose sales keep being voided is worth noticing. */
+  ok("voids are called out", (await page.locator("#stfBody .tag.rejected").count()) === 1);
+
+  ok("CSV becomes available", !(await page.locator("#stfCsv").isDisabled()));
+
+  const dl = page.waitForEvent("download", { timeout: 8000 });
+  await page.click("#stfCsv");
+  const file = await dl;
+  ok("the filename says who and when",
+     /magpms-staff-.*-to-/.test(file.suggestedFilename()), file.suggestedFilename());
+
+  const body = await (await import("node:fs/promises")).readFile(await file.path(), "utf8");
+  ok("it has a header row", body.includes('"Person","Site","Sales"'), body.slice(0, 90));
+  ok("and a total row", /\n"Total",/.test(body), body.slice(-160));
+  /* A name beginning with = is a formula to Excel, not a name. */
+  ok("a formula name is neutralised", body.includes("'=cmd"), body.slice(0, 400));
+  ok("no bare formula cell", !/(^|,)=cmd/m.test(body), body.slice(0, 400));
+}
+
+{ // switching branch must not leave one branch's people under another's name
+  await page.click('#rail [data-site="s-adama"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#stfBody").textContent.includes("Choose a range"), null, { timeout: 5000 });
+  ok("a stale staff report is cleared with the sales one",
+     await page.locator("#stfCsv").isDisabled());
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));

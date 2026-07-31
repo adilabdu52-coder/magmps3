@@ -331,6 +331,33 @@
         </table>
       </div>
     </div>
+
+    <!-- The sales report answers "how did the business do". With twenty
+         people across five branches the other question is "how is Abebe
+         doing", and that was previously only answerable by reading the sales
+         list and counting. Same range as above, so the two agree. -->
+    <div class="card">
+      <h2>Staff report</h2>
+      <p class="card-note">One row per person, over the range chosen above. Voided sales are left out of
+        the money but counted on their own — a cashier whose sales keep being voided is telling you
+        something, and it is invisible if voids are simply dropped.</p>
+
+      <div class="report-actions">
+        <button class="btn btn-gold" id="stfBtn">👥 Run staff report</button>
+        <button class="btn btn-blue" id="stfCsv" disabled>⬇ Download CSV</button>
+      </div>
+      <div class="msg" id="stfMsg"></div>
+
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Person</th><th>Site</th>
+            <th class="mono">Sales</th><th class="mono">Litres</th><th class="mono">ETB</th>
+            <th class="mono">Cash</th><th class="mono">Credit</th>
+            <th class="mono">Voided</th><th class="mono">Days</th><th>Best day</th></tr></thead>
+          <tbody id="stfBody"><tr><td colspan="10" class="empty">Choose a range above and run it</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -919,6 +946,74 @@ function exportReport() {
   toast("Report downloaded", "ok");
 }
 
+/* ---------- staff report ---------- */
+let stfRows = [];
+
+async function runStaffReport() {
+  /* Deliberately the same two date boxes as the sales report. Two ranges on
+     one screen is two chances to compare figures that were never over the
+     same period. */
+  const from = $("repFrom").value, to = $("repTo").value;
+  if (!from || !to) { msg("stfMsg", "Choose both dates above", "error"); return; }
+  if (from > to) { msg("stfMsg", "The From date is after the To date", "error"); return; }
+
+  const btn = $("stfBtn"); btn.disabled = true;
+  try {
+    stfRows = await rpc("report_staff",
+      { p_station_id: stationParam(), p_from: from, p_to: to }) || [];
+    renderStaffReport();
+    msg("stfMsg", stfRows.length ? "" : "Nobody sold anything in this range",
+        stfRows.length ? "" : "error");
+  } catch (e) {
+    stfRows = [];
+    $("stfCsv").disabled = true;
+    failRows("stfBody", 10, "the staff report");
+    msg("stfMsg", "Could not run the staff report", "error");
+    loadFailed("runStaffReport", e);
+  } finally { btn.disabled = false; }
+}
+
+function renderStaffReport() {
+  $("stfCsv").disabled = stfRows.length === 0;
+  if (!stfRows.length) {
+    $("stfBody").innerHTML = '<tr><td colspan="10" class="empty">Nobody sold anything in this range</td></tr>';
+    return;
+  }
+  $("stfBody").innerHTML = stfRows.map(r => `<tr>
+    <td>${esc(r.staff_name || "—")}</td>
+    <td>${esc(r.station_name || "")}</td>
+    <td class="mono">${fmt.int(r.sale_count)}</td>
+    <td class="mono">${fmt.int(r.liters)}</td>
+    <td class="mono">${fmt.money(r.sales_etb)}</td>
+    <td class="mono">${fmt.money(r.cash_etb)}</td>
+    <td class="mono">${fmt.money(r.credit_etb)}</td>
+    <td class="mono">${Number(r.voided_count) > 0
+        ? `<span class="tag rejected">${fmt.int(r.voided_count)}</span>` : "0"}</td>
+    <td class="mono">${fmt.int(r.days_active)}</td>
+    <td class="mono">${r.best_day ? esc(r.best_day) : "—"}</td></tr>`).join("");
+}
+
+function exportStaffReport() {
+  if (!stfRows.length) return;
+  const rows = [["Person", "Site", "Sales", "Litres", "ETB", "Cash", "Credit",
+                 "Voided", "Days active", "Best day"]];
+  let n = 0, l = 0, etb = 0, cash = 0, cr = 0, v = 0;
+  stfRows.forEach(r => {
+    rows.push([r.staff_name, r.station_name, r.sale_count, r.liters, r.sales_etb,
+               r.cash_etb, r.credit_etb, r.voided_count, r.days_active, r.best_day || ""]);
+    n += Number(r.sale_count || 0); l += Number(r.liters || 0);
+    etb += Number(r.sales_etb || 0); cash += Number(r.cash_etb || 0);
+    cr += Number(r.credit_etb || 0); v += Number(r.voided_count || 0);
+  });
+  rows.push([], ["Total", "", n, l, etb.toFixed(2), cash.toFixed(2), cr.toFixed(2), v, "", ""]);
+
+  const where = selected === "all"
+    ? "all-sites"
+    : stationName(selected).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  downloadCsv(`magpms-staff-${where}-${$("repFrom").value}-to-${$("repTo").value}.csv`, rows);
+  toast("Staff report downloaded", "ok");
+}
+
 /* ---------- tanks & delivery ---------- */
 async function loadTanks() {
   const el = $("tankList");
@@ -1230,6 +1325,13 @@ const LOADERS = {
     $("repStats").innerHTML = "";
     $("repBody").innerHTML = '<tr><td colspan="6" class="empty">Choose a range and run the report</td></tr>';
     msg("repMsg", "", "");
+
+    // The staff report sits under the same heading and the same dates, so it
+    // goes stale for the same reason and is cleared with it.
+    stfRows = [];
+    $("stfCsv").disabled = true;
+    $("stfBody").innerHTML = '<tr><td colspan="10" class="empty">Choose a range above and run it</td></tr>';
+    msg("stfMsg", "", "");
   }
 };
 
@@ -1287,6 +1389,8 @@ function bind() {
   $("saleSearch").addEventListener("input", renderSales);
   $("repBtn").addEventListener("click", runReport);
   $("repCsv").addEventListener("click", exportReport);
+  $("stfBtn").addEventListener("click", runStaffReport);
+  $("stfCsv").addEventListener("click", exportStaffReport);
 
   $("shiftDays").addEventListener("click", e => {
     const t = e.target.closest("[data-days]");
