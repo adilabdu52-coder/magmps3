@@ -85,6 +85,14 @@ const DATA = {
   ],
   admin_set_staff_status: { success: true, message: "staff approved" },
   admin_set_price: { success: true, message: "price updated" },
+  admin_resolve_correction: { success: true, message: "sale corrected" },
+  admin_list_corrections: [
+    { id: "c1", sale_id: "x1", station_id: "s-adama", station_name: "Adama",
+      staff_name: "Abebe Kebede", reported_at: iso(2), reason: "typed 1000 instead of 100",
+      claimed_liters: 100, status: "open", fuel_type: "Diesel",
+      sale_liters: 1000, sale_total: 95000, payment_method: "cash", sale_at: iso(3),
+      resolved_at: null, resolution_note: null, old_liters: null, new_liters: null }
+  ],
   list_deliveries: [],
   list_credit_customers: [],
   list_expenses: [],
@@ -322,6 +330,62 @@ await page.click('#rail [data-site="s-adama"]');
 }
 
 await page.evaluate(() => { window.__override = {}; });
+
+console.log("\n[9] corrections reach the admin with both numbers");
+
+/* Deciding without the sale's figure and the cashier's claim side by side
+   means going and looking them up, which is how a report gets ignored. */
+{
+  await page.click('.mi[data-s="corrections"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#corrList").textContent.includes("Abebe"), null, { timeout: 5000 });
+
+  const t = await page.locator("#corrList").textContent();
+  ok("the cashier is named", /Abebe Kebede/.test(t), t);
+  ok("the sale as recorded is shown", /1,000 L/.test(t), t);
+  ok("and what they say it should be", /100 L/.test(t), t);
+  ok("in their own words", /typed 1000 instead of 100/.test(t), t);
+  ok("with the branch", /Adama/.test(t), t);
+
+  ok("an open report offers Fix", await page.locator('[data-act="corr-fix"]').count() === 1);
+  ok("and Reject", await page.locator('[data-act="corr-reject"]').count() === 1);
+
+  /* Rejecting must be a deliberate act - it leaves a wrong sale standing. */
+  await page.click('[data-act="corr-reject"]');
+  await page.waitForSelector("#uiModal.open", { timeout: 5000 });
+  const dlg = await page.locator("#uiModal").textContent();
+  ok("rejecting asks first", /Reject this report/i.test(dlg), dlg);
+  ok("and says what will not happen",
+     /nothing moves in the tank/i.test(dlg), dlg);
+  await page.click("#umCancel");
+  ok("cancelling sends nothing",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_resolve_correction"));
+
+  /* The cashier's figure is offered, but the admin types the number that
+     goes in - they are the one who can check it against the meter. */
+  await page.click('[data-act="corr-fix"]');
+  await page.waitForSelector("#uiModal.open", { timeout: 5000 });
+  const fixDlg = await page.locator("#uiModal").textContent();
+  ok("fixing shows the claimed figure", /100 litres/.test(fixDlg), fixDlg);
+  await page.fill("#umInput", "100");
+  await page.click("#umOk");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("admin_resolve_correction"), null, { timeout: 5000 });
+  ok("fixing sends the correction", true);
+}
+
+{ // nothing waiting should read as nothing waiting, not as a failure
+  await page.evaluate(() => { window.__override = { admin_list_corrections: [] }; });
+  await page.click('#corrTabs [data-corr="fixed"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#corrList").textContent.trim().length > 0, null, { timeout: 5000 });
+  await page.click('#corrTabs [data-corr="open"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#corrList").textContent.includes("Nothing waiting"), null, { timeout: 5000 });
+  const empty = await page.locator("#corrList").textContent();
+  ok("an empty queue is good news, and says so", /no staff have reported/i.test(empty), empty);
+  await page.evaluate(() => { window.__override = {}; });
+}
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
 
