@@ -36,6 +36,7 @@
   <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
   <div class="mi" data-s="corrections"><span class="ic">🛠</span> Corrections</div>
   <div class="mi" data-s="reports"><span class="ic">📈</span> Reports</div>
+  <div class="mi" data-s="backup"><span class="ic">💾</span> Backup</div>
 </nav>
 
 <div class="wrap">
@@ -357,6 +358,31 @@
           <tbody id="stfBody"><tr><td colspan="10" class="empty">Choose a range above and run it</td></tr></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== BACKUP ===== -->
+  <div class="section" id="sec-backup">
+    <h1 class="display">Backup</h1>
+    <div class="sub">A copy of everything, in one file</div>
+    <div class="card">
+      <h2>Download</h2>
+      <p class="card-note">Every branch, every sale, staff, tanks, prices, credit customers, expenses,
+        shifts, attendance, deliveries and corrections — the whole database, not the last few hundred
+        rows. Not filtered by the branch selected above. Keep a copy somewhere other than the phone.</p>
+      <div class="report-actions">
+        <button class="btn btn-gold" id="bkBtn">💾 Download backup</button>
+      </div>
+      <div class="msg" id="bkMsg"></div>
+      <!-- The counts are the point: a backup you cannot check is one you are
+           trusting rather than one you have verified. -->
+      <div class="price-chips" id="bkCounts"></div>
+
+      <div class="divider"></div>
+      <p class="card-note">This is a record, not a restore button. Putting it back means inserting the
+        rows in order and recreating sign-ins in Supabase first — logins are not in the file and cannot
+        be. What it is good for: proving what the books said on a given day, moving to another project,
+        and answering “what did we sell last March” after something has gone wrong.</p>
     </div>
   </div>
 
@@ -915,6 +941,56 @@ function csvCell(v) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
+/* ---------- backup ---------- */
+/* A JSON backup must NOT carry the UTF-8 BOM that downloadCsv adds. Excel
+   wants that byte; JSON.parse chokes on it, and this file exists to be read
+   back by a machine. */
+async function downloadBackup() {
+  const btn = $("bkBtn");
+  btn.disabled = true;
+  const was = btn.textContent;
+  btn.textContent = "Preparing…";
+  /* Clear the previous run's figures before starting. Left up, they would sit
+     under whatever this attempt reports - including a failure - and be read
+     as the counts for a file that was never written. */
+  $("bkCounts").innerHTML = "";
+  msg("bkMsg", "", "");
+  try {
+    /* admin_backup reads the tables directly, with no limit. It deliberately
+       does not reuse list_sales and friends: every one of those caps at 500
+       rows, so an export built on them would keep saying "downloaded" while
+       quietly leaving the business's sales behind. */
+    const b = await rpc("admin_backup");
+    if (!b || b.error) {
+      msg("bkMsg", b?.error === "not authorised"
+        ? "Only an admin can download a backup" : "Could not build the backup", "error");
+      return;
+    }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const url = URL.createObjectURL(new Blob([JSON.stringify(b, null, 2)],
+      { type: "application/json;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `magpms-backup-${day}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+
+    /* Show the counts on screen as well as in the file. A backup you cannot
+       check is one you are trusting rather than one you have verified. */
+    const c = b.counts || {};
+    $("bkCounts").innerHTML = Object.keys(c).sort().map(k =>
+      `<span class="chip">${esc(k.replace(/_/g, " "))}: ${fmt.int(c[k])}</span>`).join("");
+    msg("bkMsg", "Backup downloaded. Keep a copy off the phone.", "success");
+    toast("Backup downloaded ✔", "ok");
+  } catch (e) {
+    msg("bkMsg", "Could not build the backup", "error");
+    loadFailed("downloadBackup", e);
+  } finally { btn.disabled = false; btn.textContent = was; }
+}
+
 function downloadCsv(filename, rows) {
   // The BOM is what makes Excel read this as UTF-8; without it Amharic and
   // Oromo names open as mojibake.
@@ -1317,6 +1393,10 @@ const LOADERS = {
   sales:     loadSales,
   expenses:  loadExpenses,
   corrections: loadCorrections,
+  /* The backup is the whole database, so it is not branch-scoped and has
+     nothing to fetch on arrival. Clearing the last run's counts stops one
+     download's figures being read as another's. */
+  backup: async () => { $("bkCounts").innerHTML = ""; msg("bkMsg", "", ""); },
   /* A report belongs to the branch and range it was run for. Clearing beats
      leaving one branch's figures sitting under another branch's heading. */
   reports:   async () => {
@@ -1391,6 +1471,7 @@ function bind() {
   $("repCsv").addEventListener("click", exportReport);
   $("stfBtn").addEventListener("click", runStaffReport);
   $("stfCsv").addEventListener("click", exportStaffReport);
+  $("bkBtn").addEventListener("click", downloadBackup);
 
   $("shiftDays").addEventListener("click", e => {
     const t = e.target.closest("[data-days]");

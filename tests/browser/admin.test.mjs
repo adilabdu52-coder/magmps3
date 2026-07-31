@@ -86,6 +86,13 @@ const DATA = {
   admin_set_staff_status: { success: true, message: "staff approved" },
   admin_set_price: { success: true, message: "price updated" },
   admin_resolve_correction: { success: true, message: "sale corrected" },
+  admin_backup: {
+    magpms_backup_version: 1, generated_at: "2026-07-31T21:00:00Z", timezone: "Africa/Addis_Ababa",
+    counts: { stations: 2, staff: 4, tanks: 20, sales: 600, expenses: 0 },
+    stations: ST, staff: [], tanks: [], fuel_prices: [], sales: [],
+    credit_customers: [], expenses: [], shifts: [], attendance: [],
+    deliveries: [], price_history: [], sale_corrections: []
+  },
   report_staff: [
     { staff_id: "u2", staff_name: "Abebe Kebede", station_id: "s-adama", station_name: "Adama",
       sale_count: 12, liters: 480, sales_etb: 45600, cash_etb: 40600, credit_etb: 5000,
@@ -440,6 +447,55 @@ console.log("\n[10] the staff report");
     document.querySelector("#stfBody").textContent.includes("Choose a range"), null, { timeout: 5000 });
   ok("a stale staff report is cleared with the sales one",
      await page.locator("#stfCsv").isDisabled());
+}
+
+console.log("\n[11] backup");
+
+{
+  await page.click('.mi[data-s="backup"]');
+  const dl = page.waitForEvent("download", { timeout: 8000 });
+  await page.click("#bkBtn");
+  const file = await dl;
+  ok("the filename carries the date",
+     /^magpms-backup-\d{4}-\d{2}-\d{2}\.json$/.test(file.suggestedFilename()),
+     file.suggestedFilename());
+
+  const raw = await readFile(await file.path(), "utf8");
+  /* The CSV download prepends a BOM so Excel reads UTF-8. JSON.parse chokes
+     on it, and this file exists to be read back by a machine. */
+  ok("no BOM on a JSON file", !raw.startsWith("﻿"), JSON.stringify(raw.slice(0, 4)));
+
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch { /* left null */ }
+  ok("it parses", parsed !== null);
+  ok("it says what version it is", parsed && parsed.magpms_backup_version === 1);
+  ok("and when it was made", parsed && !!parsed.generated_at);
+  ok("every table is present even when empty",
+     parsed && ["stations","staff","tanks","fuel_prices","sales","credit_customers",
+                "expenses","shifts","attendance","deliveries","price_history",
+                "sale_corrections"].every(k => Array.isArray(parsed[k])));
+
+  /* The counts are the point: a backup you cannot check is one you are
+     trusting rather than one you have verified. */
+  const chips = await page.locator("#bkCounts").textContent();
+  ok("the counts are shown on screen", /sales: 600/.test(chips), chips);
+  ok("and read as words, not column names", !/_/.test(chips), chips);
+  ok("it says to keep a copy elsewhere",
+     /off the phone/i.test(await page.locator("#bkMsg").textContent()));
+}
+
+{ // a refusal must read as a refusal, not as an empty backup
+  await page.evaluate(() => { window.__override = { admin_backup: { error: "not authorised" } }; });
+  await page.click('.mi[data-s="sales"]');
+  await page.click('.mi[data-s="backup"]');
+  await page.click("#bkBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#bkMsg").textContent.length > 0, null, { timeout: 5000 });
+  const m = await page.locator("#bkMsg").textContent();
+  ok("a refusal is explained", /only an admin/i.test(m), m);
+  ok("and no counts are shown for it",
+     (await page.locator("#bkCounts").textContent()).trim() === "");
+  await page.evaluate(() => { window.__override = {}; });
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
