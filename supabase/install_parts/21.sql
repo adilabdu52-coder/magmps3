@@ -1,4 +1,4 @@
--- MAGPMS install 21 of 22 - run IN ORDER, one at a time.
+-- MAGPMS install 21 of 23 - run IN ORDER, one at a time.
 -- Project: fendopitdcyoefpxuevd
 -- No begin/commit: a transaction split across files rolls back.
 --
