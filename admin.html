@@ -128,6 +128,10 @@
         <button class="tab" data-filter="rejected">Rejected</button>
         <button class="tab" data-filter="all">All</button>
       </div>
+      <!-- Approving someone moves them off the Pending tab, taking the branch
+           dropdown out of sight with them. This stays visible on every tab
+           until every approved person has a branch. -->
+      <div class="msg error hidden" id="staffNoBranch"></div>
       <div id="staffList" class="empty">Loading...</div>
     </div>
   </div>
@@ -620,11 +624,34 @@ async function loadStaff() {
   catch (e) { failPanel("staffList", "staff"); loadFailed("loadStaff", e); }
 }
 
+/* An approved operator with no branch can sign in and then cannot sell:
+   record_sale answers "no branch assigned". From the till that reads as a
+   broken app, and the person it happens to is the last to be able to explain
+   it. The Pending tab hides them the moment they are approved, so this is
+   counted across everyone, not across what is currently on screen, and it
+   names them - "two people" sends you hunting, names do not.
+
+   Admins are exempt. No branch is how a central admin sees all five. */
+function renderNoBranchWarning() {
+  const stuck = allStaff.filter(s =>
+    s.status === "approved" && !s.station_id && s.role !== "admin");
+  const el = $("staffNoBranch");
+  el.classList.toggle("hidden", stuck.length === 0);
+  if (!stuck.length) return;
+  el.textContent = (stuck.length === 1
+    ? `${stuck[0].full_name || stuck[0].email} is approved but has no branch, so cannot record a sale. `
+    : `${stuck.length} approved staff have no branch and cannot record a sale: ` +
+      stuck.map(s => s.full_name || s.email).join(", ") + ". ") +
+    "Set the branch on the Approved tab.";
+}
+
 function renderStaff() {
   const q = ($("staffSearch").value || "").trim().toLowerCase();
   let rows = staffFilter === "all" ? allStaff : allStaff.filter(s => s.status === staffFilter);
   if (selected !== "all") rows = rows.filter(s => s.station_id === selected || !s.station_id);
   if (q) rows = rows.filter(s => (s.full_name || "").toLowerCase().includes(q));
+
+  renderNoBranchWarning();
 
   const list = $("staffList");
   if (!rows.length) { list.className = "empty"; list.textContent = "No staff in this category"; return; }
@@ -970,8 +997,21 @@ function bindRowActions() {
     try {
       switch (el.getAttribute("data-act")) {
         case "staff-status": {
-          const r = await rpc("admin_set_staff_status", { p_staff_id: id, p_status: el.getAttribute("data-status") });
-          toast(r.message || "Updated", r.success ? "ok" : "err"); loadStaff(); break;
+          const status = el.getAttribute("data-status");
+          const before = allStaff.find(s => s.id === id);
+          const r = await rpc("admin_set_staff_status", { p_staff_id: id, p_status: status });
+
+          /* Approving moves them off the Pending tab, and the branch dropdown
+             goes with them. Say it at the moment it happens, while the person
+             doing it still remembers who they just approved - the standing
+             warning above the list is the backstop, not the first word. */
+          if (r.success && status === "approved" && before && !before.station_id && before.role !== "admin")
+            toast("Approved - now give " + (before.full_name || "them") +
+                  " a branch, or they cannot sell", "err");
+          else
+            toast(r.message || "Updated", r.success ? "ok" : "err");
+
+          loadStaff(); break;
         }
         case "credit-pay": {
           const amt = await promptNumber("Credit payment",

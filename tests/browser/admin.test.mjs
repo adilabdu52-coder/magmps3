@@ -68,8 +68,22 @@ const DATA = {
   get_prices: [{ fuel_type: "Benzil", price_per_liter: 91.5 },
                { fuel_type: "Diesel", price_per_liter: 95.0 }],
   price_history: [],
-  admin_list_staff: [{ id: "u1", full_name: "Owner", email: "o@x.com", phone: null,
-                       role: "admin", status: "approved", station_id: null }],
+  admin_list_staff: [
+    // An admin with no branch is correct, not stranded - that is how the
+    // central admin sees all five - so this row must NOT raise the warning.
+    { id: "u1", full_name: "Owner", email: "o@x.com", phone: null,
+      role: "admin", status: "approved", station_id: null },
+    // Approved, no branch: can sign in, cannot sell.
+    { id: "u2", full_name: "Abebe Kebede", email: "a@x.com", phone: null,
+      role: "operator", status: "approved", station_id: null },
+    // Approved with a branch: working, and must not be named.
+    { id: "u3", full_name: "Sara O'Brien", email: "s@x.com", phone: null,
+      role: "operator", status: "approved", station_id: "s-adama" },
+    // Waiting. Approving this one is what fires the warning toast.
+    { id: "u4", full_name: "Hana Tesfaye", email: "h@x.com", phone: null,
+      role: "operator", status: "pending", station_id: null }
+  ],
+  admin_set_staff_status: { success: true, message: "staff approved" },
   list_deliveries: [],
   list_credit_customers: [],
   list_expenses: [],
@@ -198,6 +212,40 @@ await page.click('.mi[data-s="expenses"]');
 await page.waitForFunction(() =>
   !document.querySelector("#expBody").textContent.includes("Could not load"), null, { timeout: 5000 });
 ok("a failed section retries on the next visit", true);
+
+console.log("\n[7] approved staff with no branch are not left invisible");
+
+/* Approving someone moves them off the Pending tab and takes the branch
+   dropdown with them. That is how an operator ends up approved, unable to
+   sell, and convinced the app is broken - it happened on the live system.
+   The warning is counted across everyone, not across the current tab. */
+await page.click('#rail [data-site="all"]');
+await page.click('.mi[data-s="staff"]');
+await page.waitForFunction(() =>
+  !document.getElementById("staffNoBranch").classList.contains("hidden"), null, { timeout: 5000 });
+
+const warn = await page.locator("#staffNoBranch").textContent();
+ok("the warning is shown", await page.locator("#staffNoBranch").isVisible());
+ok("it names the person who is stuck", warn.includes("Abebe Kebede"), warn);
+ok("it says what they cannot do", /cannot record a sale/i.test(warn), warn);
+ok("an admin with no branch is not counted", !warn.includes("Owner"), warn);
+ok("someone who has a branch is not counted", !warn.includes("Sara"), warn);
+
+/* The Pending tab is where the approving happens, so the warning has to
+   survive being on it - that is the tab where the stranded person is not. */
+ok("and it survives the tab that hides them",
+   await page.locator("#staffNoBranch").isVisible());
+
+// Approving someone with no branch warns at the moment it happens.
+await page.click('#staffTabs [data-filter="pending"]');
+await page.waitForFunction(() =>
+  document.querySelector("#staffList").textContent.includes("Hana"), null, { timeout: 5000 });
+await page.click('[data-act="staff-status"][data-id="u4"][data-status="approved"]');
+await page.waitForFunction(() =>
+  document.querySelectorAll("#toastHost .toast").length > 0, null, { timeout: 5000 });
+const toastText = await page.locator("#toastHost .toast").last().textContent();
+ok("approving without a branch warns immediately", /give Hana Tesfaye a branch/i.test(toastText), toastText);
+ok("and says why it matters", /cannot sell/i.test(toastText), toastText);
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
 
