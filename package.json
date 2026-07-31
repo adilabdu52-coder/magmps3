@@ -5,7 +5,7 @@
   "scripts": {
     "test": "npm run test:static && npm run test:browser",
     "test:static": "node .github/scripts/check.mjs",
-    "test:browser": "node tests/browser/admin.test.mjs && node tests/browser/reset.test.mjs"
+    "test:browser": "node tests/browser/admin.test.mjs && node tests/browser/reset.test.mjs && node tests/browser/staff.test.mjs"
   },
   "devDependencies": {
     "playwright": "^1.49.1"
