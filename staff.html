@@ -50,14 +50,49 @@
   <div class="sub" id="stationLine">—</div>
   <div class="clock"><div class="d" id="clockDate">—</div><div class="t" id="clockTime">—</div></div>
 
+  <!-- A cashier cannot sell without an open shift, but the shift lived two
+       taps away on its own tab. The two things that decide whether they can
+       work at all now sit on the first screen they see. -->
+  <div class="shift-banner shift-none" id="dashShift">Checking shift…</div>
+  <div class="shift-banner shift-none" id="dashAtt">Checking attendance…</div>
+
   <div class="stats">
     <div class="scard"><div class="em">💰</div><div class="lbl">My Sales</div>
       <div class="val v-gold" id="mySales">0</div><div class="unit">ETB today</div></div>
     <div class="scard"><div class="em">⛽</div><div class="lbl">Litres Sold</div>
       <div class="val v-blue" id="myLiters">0</div><div class="unit">L today</div></div>
+    <div class="scard"><div class="em">🧾</div><div class="lbl">Sales</div>
+      <div class="val v-purple" id="myCount">0</div><div class="unit">today</div></div>
+    <!-- Credit is the number that turns into a debt if nobody watches it,
+         so it gets a card of its own rather than hiding inside the total. -->
+    <div class="scard"><div class="em">📕</div><div class="lbl">On Credit</div>
+      <div class="val v-green" id="myCredit">0</div><div class="unit">ETB today</div></div>
   </div>
 
   <div class="refresh-line"><span id="updStamp">—</span><button id="refreshBtn">↻ Refresh now</button></div>
+
+  <!-- The price is what a cashier is asked about most, and it was only on
+       the Sell Fuel tab. -->
+  <div class="card">
+    <h2>Today's Prices</h2>
+    <div class="price-chips" id="dashPrices"><span class="chip">Loading…</span></div>
+  </div>
+
+  <div class="card">
+    <h2>By Fuel</h2>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Fuel</th><th class="mono">Litres</th><th class="mono">ETB</th><th class="mono">Sales</th></tr></thead>
+        <tbody id="myByFuel"><tr><td colspan="4" class="empty">No sales yet today</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- A cashier should see their tank running low before a customer does. -->
+  <div class="card hidden" id="lowTankCard">
+    <h2>Tanks Running Low</h2>
+    <div id="lowTankList"></div>
+  </div>
 
   <div class="card">
     <h2>My Recent Sales</h2>
@@ -169,7 +204,7 @@
 
 <script type="module">
 import { rpc, signOut, requireStaff } from "./config.js";
-import { esc, fmt, msg, toast, loadFailed, tankRow, stampUpdated } from "./ui.js";
+import { esc, fmt, msg, toast, loadFailed, tankRow, tankPct, stampUpdated } from "./ui.js";
 
 const $ = id => document.getElementById(id);
 let staff = null;          // the signed-in cashier, from the server
@@ -190,8 +225,13 @@ async function loadPrices() {
     sel.innerHTML = rows.map(p => `<option>${esc(p.fuel_type)}</option>`).join("");
     if (rows.some(p => p.fuel_type === keep)) sel.value = keep;   // survive auto-refresh mid-sale
 
-    $("priceChips").innerHTML = rows.map(p =>
-      `<span class="chip">${esc(p.fuel_type)}: ${fmt.price(p.price_per_liter)} ETB/L</span>`).join("");
+    const chips = rows.length
+      ? rows.map(p => `<span class="chip">${esc(p.fuel_type)}: ${fmt.price(p.price_per_liter)} ETB/L</span>`).join("")
+      : '<span class="chip">No prices set — ask the manager</span>';
+    /* The same chips on My Day. The price is what a cashier is asked for
+       most often, and it used to live only on the Sell Fuel tab. */
+    $("priceChips").innerHTML = chips;
+    $("dashPrices").innerHTML = chips;
     liveTotal();
   } catch (e) { loadFailed("loadPrices", e); }
 }
@@ -274,6 +314,35 @@ async function loadMyDay() {
     const live = Array.isArray(rows) ? rows.filter(s => !s.voided) : [];
     $("mySales").textContent = fmt.int(live.reduce((a, s) => a + Number(s.total_etb || 0), 0));
     $("myLiters").textContent = fmt.int(live.reduce((a, s) => a + Number(s.liters || 0), 0));
+    $("myCount").textContent = fmt.int(live.length);
+
+    /* Credit gets its own number rather than hiding inside the total. It is
+       the part of the day's takings that is not in the drawer, and the part
+       that turns into a debt if nobody watches it. */
+    $("myCredit").textContent = fmt.int(live
+      .filter(s => s.payment_method === "credit")
+      .reduce((a, s) => a + Number(s.total_etb || 0), 0));
+
+    /* Per fuel, so a cashier can answer "how much diesel today" without
+       counting rows. Sorted by litres, because the busiest fuel is the one
+       worth seeing first. */
+    const byFuel = new Map();
+    for (const s of live) {
+      const f = byFuel.get(s.fuel_type) || { liters: 0, etb: 0, n: 0 };
+      f.liters += Number(s.liters || 0);
+      f.etb    += Number(s.total_etb || 0);
+      f.n      += 1;
+      byFuel.set(s.fuel_type, f);
+    }
+    const fuelRows = [...byFuel.entries()].sort((a, b) => b[1].liters - a[1].liters);
+    $("myByFuel").innerHTML = fuelRows.length
+      ? fuelRows.map(([fuel, f]) => `<tr>
+          <td>${esc(fuel)}</td>
+          <td class="mono">${fmt.int(f.liters)}</td>
+          <td class="mono">${fmt.money(f.etb)}</td>
+          <td class="mono">${fmt.int(f.n)}</td></tr>`).join("")
+      : '<tr><td colspan="4" class="empty">No sales yet today</td></tr>';
+
     $("myTx").innerHTML = live.length
       ? live.slice(0, 20).map(s => `<tr>
           <td class="mono">${esc(fmt.time(s.created_at))}</td>
@@ -315,6 +384,14 @@ async function loadTanks() {
     }
     el.className = "";
     el.innerHTML = rows.map(tankRow).join("");
+
+    /* A cashier should see their tank running low before a customer does.
+       Under 30% only, and the card hides itself entirely when there is
+       nothing to say - a permanent empty panel is noise, and noise is what
+       gets ignored on the day it finally matters. */
+    const low = rows.filter(t => tankPct(t) < 30).sort((a, b) => tankPct(a) - tankPct(b));
+    $("lowTankCard").classList.toggle("hidden", low.length === 0);
+    if (low.length) $("lowTankList").innerHTML = low.map(tankRow).join("");
   } catch (e) { loadFailed("loadTanks", e); }
 }
 
@@ -322,7 +399,7 @@ async function checkShift() {
   try {
     const rows = await rpc("my_open_shift");
     const open = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
-    [$("shiftBanner"), $("shiftBanner2")].forEach(b => {
+    [$("shiftBanner"), $("shiftBanner2"), $("dashShift")].forEach(b => {
       b.className = "shift-banner " + (open ? "shift-open" : "shift-none");
       b.textContent = open
         ? `✔ Shift OPEN since ${fmt.time(open.opened_at)} · opening meter ${open.opening_meter} L`
@@ -349,10 +426,12 @@ async function attStatus() {
     const rows = await rpc("my_attendance_status");
     const a = Array.isArray(rows) && rows.length ? rows[0] : null;
     const inNow = a && !a.check_out;
-    $("attBanner").className = "shift-banner " + (inNow ? "shift-open" : "shift-none");
-    $("attBanner").textContent = inNow
-      ? `✔ Checked in at ${fmt.time(a.check_in)}`
-      : "Not checked in";
+    [$("attBanner"), $("dashAtt")].forEach(b => {
+      b.className = "shift-banner " + (inNow ? "shift-open" : "shift-none");
+      b.textContent = inNow
+        ? `✔ Checked in at ${fmt.time(a.check_in)}`
+        : "Not checked in — check in from Attendance";
+    });
     $("inBtn").disabled = !!inNow;
     $("outBtn").disabled = !inNow;
   } catch (e) { loadFailed("attStatus", e); }
