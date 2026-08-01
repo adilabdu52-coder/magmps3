@@ -2848,8 +2848,10 @@ begin
       from tanks t where t.station_id = st.id and t.fuel_type is not null;
 
     for i in 1..10 loop
+      -- "Pump 1" rather than "N1": the label is read aloud at the forecourt,
+      -- and it should be the word the people using it already say.
       insert into nozzles (station_id, label, fuel_type)
-      values (st.id, 'N' || i, fuels[1 + ((i - 1) % array_length(fuels, 1))]);
+      values (st.id, 'Pump ' || i, fuels[1 + ((i - 1) % array_length(fuels, 1))]);
     end loop;
     raise notice '% : 10 nozzles created (%)', st.name, array_to_string(fuels, ', ');
   end loop;
@@ -2888,7 +2890,10 @@ as $$
    where (case when is_admin()
                then (p_station_id is null or n.station_id = p_station_id)
                else n.station_id = current_station() end)
-   order by st.name, n.label;
+   -- Shortest label first, then alphabetical: plain text sorting puts
+   -- "Pump 10" between "Pump 1" and "Pump 2", which reads as a mistake to
+   -- anybody scanning the list for their pump.
+   order by st.name, length(n.label), n.label;
 $$;
 
 -- ---------------------------------------------------------------
