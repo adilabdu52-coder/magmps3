@@ -113,9 +113,13 @@
     <div class="shift-banner shift-none" id="shiftBanner">Checking shift…</div>
     <div class="price-chips" id="priceChips"></div>
 
+    <!-- The nozzle, not the fuel. A nozzle dispenses what it dispenses, and
+         letting the till say otherwise is how stock and takings drift apart.
+         Only nozzles this person has a shift open on appear here. -->
     <div class="field">
-      <label for="sFuel">Fuel</label>
-      <select id="sFuel"></select>
+      <label for="sNozzle">Nozzle</label>
+      <select id="sNozzle"></select>
+      <div class="field-hint" id="sNozzleFuel"></div>
     </div>
 
     <div class="seg">
@@ -159,18 +163,24 @@
 <div class="section" id="sec-shift">
   <h1 class="display">Shift</h1><div class="sub">Open and close against the pump meter</div>
   <div class="card">
-    <div class="shift-banner shift-none" id="shiftBanner2">—</div>
-    <div id="openShiftForm">
-      <div class="field"><label for="openMeter">Opening meter (L)</label>
-        <input type="number" id="openMeter" step="0.01" min="0" inputmode="decimal"/></div>
-      <button class="btn btn-gold" id="openBtn">▶ Open Shift</button>
+    <h2>Open a pump</h2>
+    <!-- A meter belongs to a nozzle, not to a person, so a shift does too.
+         Working two pumps means opening two shifts, which is what makes the
+         variance answer "which pump" instead of nothing at all. -->
+    <div class="field">
+      <label for="openNozzle">Nozzle</label>
+      <select id="openNozzle"></select>
     </div>
-    <div id="closeShiftForm" class="hidden">
-      <div class="field"><label for="closeMeter">Closing meter (L)</label>
-        <input type="number" id="closeMeter" step="0.01" min="0" inputmode="decimal"/></div>
-      <button class="btn btn-out" id="closeBtn">⏹ Close Shift</button>
-    </div>
+    <div class="field"><label for="openMeter">Opening meter (L)</label>
+      <input type="number" id="openMeter" step="0.01" min="0" inputmode="decimal"/></div>
+    <button class="btn btn-gold" id="openBtn">▶ Open Shift</button>
     <div class="msg" id="shiftMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>My Open Shifts</h2>
+    <div class="shift-banner shift-none" id="shiftBanner2">—</div>
+    <div id="openShiftList" class="empty">None open</div>
   </div>
 </div>
 
@@ -262,11 +272,6 @@ async function loadPrices() {
     if (!Array.isArray(rows)) return;
     prices = Object.fromEntries(rows.map(p => [p.fuel_type, Number(p.price_per_liter)]));
 
-    const sel = $("sFuel");
-    const keep = sel.value;
-    sel.innerHTML = rows.map(p => `<option>${esc(p.fuel_type)}</option>`).join("");
-    if (rows.some(p => p.fuel_type === keep)) sel.value = keep;   // survive auto-refresh mid-sale
-
     const chips = rows.length
       ? rows.map(p => `<span class="chip">${esc(p.fuel_type)}: ${fmt.price(p.price_per_liter)} ETB/L</span>`).join("")
       : '<span class="chip">No prices set — ask the manager</span>';
@@ -290,7 +295,7 @@ function renderQuick() {
 }
 
 function saleLiters() {
-  const p = prices[$("sFuel").value] || 0;
+  const p = prices[nozzleFuel()] || 0;
   if (posMode === "amount") {
     const a = parseFloat($("sAmount").value) || 0;
     return p > 0 ? Math.round((a / p) * 100) / 100 : 0;
@@ -298,8 +303,15 @@ function saleLiters() {
   return parseFloat($("sLiters").value) || 0;
 }
 
+/* The fuel is whatever the chosen nozzle dispenses, so the price follows the
+   nozzle rather than a separate picker that could disagree with it. */
+function nozzleFuel() {
+  const o = $("sNozzle").selectedOptions[0];
+  return o ? o.getAttribute("data-fuel") || "" : "";
+}
+
 function liveTotal() {
-  const p = prices[$("sFuel").value] || 0;
+  const p = prices[nozzleFuel()] || 0;
   const l = saleLiters();
   $("liveTotal").textContent =
     `Total: ${fmt.money(l * p)} ETB · ${l.toFixed(2)} L @ ${fmt.price(p)}/L`;
@@ -316,12 +328,12 @@ function setPosMode(mode) {
 }
 
 async function submitSale() {
-  const fuel = $("sFuel").value;
+  const nozzle = $("sNozzle").value;
   const liters = saleLiters();
   const pay = $("sPay").value;
   const customer = pay === "credit" ? ($("sCustomer").value || null) : null;
 
-  if (!fuel) { msg("saleMsg", "Choose a fuel", "error"); return; }
+  if (!nozzle) { msg("saleMsg", "Open a shift on a nozzle first", "error"); return; }
   if (!(liters > 0)) { msg("saleMsg", "Enter litres or an amount", "error"); return; }
   if (pay === "credit" && !customer) { msg("saleMsg", "Choose a credit customer", "error"); return; }
 
@@ -332,14 +344,14 @@ async function submitSale() {
        signed-in user, so a cashier cannot file a sale against another
        branch or colleague. */
     const r = await rpc("record_sale", {
-      p_fuel_type: fuel, p_liters: liters,
+      p_nozzle_id: nozzle, p_liters: liters,
       p_payment: pay, p_credit_customer_id: customer
     });
     msg("saleMsg", r.message || (r.success ? "Sale recorded" : "Failed"), r.success ? "success" : "error");
     if (r.success) {
       toast("Sale recorded ✔", "ok");
       $("sLiters").value = ""; $("sAmount").value = "";
-      liveTotal(); loadMyDay(); loadTanks();
+      liveTotal(); loadMyDay(); loadTanks(); checkShift();
     }
   } catch (e) {
     msg("saleMsg", e.message || "Connection error", "error");
@@ -441,30 +453,90 @@ async function loadTanks() {
   } catch (e) { loadFailed("loadTanks", e); }
 }
 
+/* One shift per nozzle, so a person working two pumps has two. The sale
+   dropdown is built from exactly these: you can only sell from a pump you
+   have opened, which is what keeps a meter reading matching what came out
+   of it. */
+let myShifts = [];
+
 async function checkShift() {
   try {
-    const rows = await rpc("my_open_shift");
-    const open = Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+    myShifts = await rpc("my_open_shifts") || [];
+    const any = myShifts.length > 0;
+
     [$("shiftBanner"), $("shiftBanner2"), $("dashShift")].forEach(b => {
-      b.className = "shift-banner " + (open ? "shift-open" : "shift-none");
-      b.textContent = open
-        ? `✔ Shift OPEN since ${fmt.time(open.opened_at)} · opening meter ${open.opening_meter} L`
+      b.className = "shift-banner " + (any ? "shift-open" : "shift-none");
+      b.textContent = any
+        ? `✔ ${myShifts.length} pump${myShifts.length > 1 ? "s" : ""} open · ` +
+          myShifts.map(sh => `${sh.nozzle_label} since ${fmt.time(sh.opened_at)}`).join(" · ")
         : "⚠ No open shift — open one before recording sales";
     });
-    $("openShiftForm").classList.toggle("hidden", !!open);
-    $("closeShiftForm").classList.toggle("hidden", !open);
-    $("saleBtn").disabled = !open;
+
+    /* Each open shift gets its own closing box. One shared box would ask
+       which pump the reading belongs to, and a wrong answer there is a false
+       variance on two pumps at once. */
+    const list = $("openShiftList");
+    list.className = any ? "" : "empty";
+    list.innerHTML = any ? myShifts.map(sh => `
+      <div class="row"><div class="l">
+        <h4>${esc(sh.nozzle_label || "—")} · ${esc(sh.fuel_type || "")}</h4>
+        <p>Open since ${esc(fmt.time(sh.opened_at))} · opening meter ${fmt.int(sh.opening_meter)} L
+           · ${fmt.int(sh.sold_liters)} L sold</p>
+        <div class="field" style="margin-top:8px">
+          <input type="number" step="0.01" min="0" inputmode="decimal"
+                 id="close-${esc(sh.id)}" placeholder="Closing meter (L)"/>
+        </div>
+        <button class="btn btn-out" data-close-shift="${esc(sh.id)}">⏹ Close ${esc(sh.nozzle_label || "")}</button>
+      </div></div>`).join("") : "None open";
+
+    // Only nozzles with an open shift can be sold from.
+    const sel = $("sNozzle");
+    const keep = sel.value;
+    sel.innerHTML = any
+      ? myShifts.map(sh =>
+          `<option value="${esc(sh.nozzle_id)}" data-fuel="${esc(sh.fuel_type || "")}">${esc(sh.nozzle_label)} · ${esc(sh.fuel_type || "")}</option>`).join("")
+      : '<option value="">Open a shift first</option>';
+    if (myShifts.some(sh => sh.nozzle_id === keep)) sel.value = keep;
+    $("sNozzleFuel").textContent = any ? "Fuel comes from the nozzle" : "";
+
+    $("saleBtn").disabled = !any;
+    liveTotal();
   } catch (e) { loadFailed("checkShift", e); }
 }
 
-async function shiftAction(fn, inputId, label) {
-  const v = parseFloat($(inputId).value);
-  if (Number.isNaN(v) || v < 0) { msg("shiftMsg", `Enter the ${label} meter reading`, "error"); return; }
+/* Nozzles free to open: this branch's, minus any already in use. */
+async function loadNozzles() {
   try {
-    const r = await rpc(fn, fn === "open_shift" ? { p_opening_meter: v } : { p_closing_meter: v });
+    const rows = await rpc("list_nozzles") || [];
+    const free = rows.filter(n => n.active && !n.open_shift_id);
+    const sel = $("openNozzle");
+    sel.innerHTML = free.length
+      ? free.map(n => `<option value="${esc(n.id)}">${esc(n.label)} · ${esc(n.fuel_type || "no fuel set")}</option>`).join("")
+      : `<option value="">${rows.length ? "Every nozzle is in use" : "No nozzles at this branch"}</option>`;
+    $("openBtn").disabled = free.length === 0;
+  } catch (e) { loadFailed("loadNozzles", e); }
+}
+
+async function openShift() {
+  const nozzle = $("openNozzle").value;
+  const v = parseFloat($("openMeter").value);
+  if (!nozzle) { msg("shiftMsg", "Choose a nozzle", "error"); return; }
+  if (Number.isNaN(v) || v < 0) { msg("shiftMsg", "Enter the opening meter reading", "error"); return; }
+  try {
+    const r = await rpc("open_shift", { p_nozzle_id: nozzle, p_opening_meter: v });
     msg("shiftMsg", r.message || (r.success ? "Done" : "Failed"), r.success ? "success" : "error");
-    if (r.success) { $(inputId).value = ""; checkShift(); }
-  } catch (e) { msg("shiftMsg", "Connection error", "error"); loadFailed(fn, e); }
+    if (r.success) { $("openMeter").value = ""; checkShift(); loadNozzles(); }
+  } catch (e) { msg("shiftMsg", "Connection error", "error"); loadFailed("open_shift", e); }
+}
+
+async function closeShift(id) {
+  const v = parseFloat(($(`close-${id}`) || {}).value);
+  if (Number.isNaN(v) || v < 0) { msg("shiftMsg", "Enter the closing meter reading", "error"); return; }
+  try {
+    const r = await rpc("close_shift", { p_shift_id: id, p_closing_meter: v });
+    msg("shiftMsg", r.message || (r.success ? "Done" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { checkShift(); loadNozzles(); }
+  } catch (e) { msg("shiftMsg", "Connection error", "error"); loadFailed("close_shift", e); }
 }
 
 async function attStatus() {
@@ -557,12 +629,15 @@ function bind() {
   $("logoutBtn").addEventListener("click", async () => { await signOut(); location.replace("index.html"); });
   $("refreshBtn").addEventListener("click", refreshAll);
   $("saleBtn").addEventListener("click", submitSale);
-  $("openBtn").addEventListener("click", () => shiftAction("open_shift", "openMeter", "opening"));
-  $("closeBtn").addEventListener("click", () => shiftAction("close_shift", "closeMeter", "closing"));
+  $("openBtn").addEventListener("click", openShift);
+  document.addEventListener("click", e => {
+    const b = e.target.closest("[data-close-shift]");
+    if (b) closeShift(b.getAttribute("data-close-shift"));
+  });
   $("inBtn").addEventListener("click", () => attAction("check_in"));
   $("outBtn").addEventListener("click", () => attAction("check_out"));
   $("rpBtn").addEventListener("click", submitReport);
-  $("sFuel").addEventListener("change", liveTotal);
+  $("sNozzle").addEventListener("change", liveTotal);
   $("sPay").addEventListener("change", () =>
     $("custField").classList.toggle("hidden", $("sPay").value !== "credit"));
 
@@ -581,7 +656,8 @@ function bind() {
 }
 
 function refreshAll() {
-  loadMyDay(); loadPrices(); loadTanks(); checkShift(); attStatus(); loadMyReports();
+  loadMyDay(); loadPrices(); loadTanks(); checkShift(); attStatus();
+  loadMyReports(); loadNozzles();
 }
 
 (async function init() {
