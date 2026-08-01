@@ -190,3 +190,45 @@ begin
 
   raise notice 'operator scoping: ok';
 end $$;
+
+-- ---------------------------------------------------------------
+-- 7. the upgrade path
+-- ---------------------------------------------------------------
+-- The checks above were written against a schema that had never seen 0007,
+-- so list_shifts did not exist and `create or replace` was free to define it
+-- with whatever columns it liked. Every real database HAS 0007, and there
+-- Postgres refuses:
+--
+--   ERROR: cannot change return type of existing function
+--
+-- That is how this shipped broken. The run script now loads 0007 before 0015
+-- so this file exercises the path everybody actually takes, and these checks
+-- confirm the new columns survived it.
+do $$
+declare v_admin_auth uuid; v_n int;
+begin
+  select auth_user_id into v_admin_auth from staff where role = 'admin';
+  perform set_config('test.uid', v_admin_auth::text, false);
+
+  -- If the drop had been skipped, list_shifts would still be 0007's version
+  -- and this column would not exist.
+  select count(*) into v_n from list_shifts(null, 7, 200) where abandoned is not null;
+  if v_n = 0 then
+    raise exception 'list_shifts has no abandoned column - the old definition survived';
+  end if;
+
+  select count(*) into v_n from list_attendance(null, 7, 200) where abandoned is not null;
+  if v_n = 0 then
+    raise exception 'list_attendance has no abandoned column - the old definition survived';
+  end if;
+
+  -- Dropping a function takes its grants with it.
+  if not has_function_privilege('authenticated', 'list_shifts(uuid,int,int)', 'execute') then
+    raise exception 'list_shifts lost its execute grant when it was recreated';
+  end if;
+  if not has_function_privilege('authenticated', 'list_attendance(uuid,int,int)', 'execute') then
+    raise exception 'list_attendance lost its execute grant when it was recreated';
+  end if;
+
+  raise notice 'upgrade path: ok';
+end $$;
