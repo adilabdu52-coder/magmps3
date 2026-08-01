@@ -95,6 +95,18 @@ const DATA = {
   admin_set_staff_status: { success: true, message: "staff approved" },
   admin_set_price: { success: true, message: "price updated" },
   close_shift: { success: true, message: "shift closed for them" },
+  admin_add_note: { success: true, message: "note saved", id: "nt9" },
+  admin_set_note: { success: true, message: "note updated" },
+  admin_delete_note: { success: true, message: "note deleted" },
+  admin_list_notes: [
+    { id: "nt1", station_id: "s-adama", station_name: "Adama",
+      body: "Pumps 1 and 2 are Benzil, the rest Diesel", pinned: true,
+      author: "Owner", created_at: iso(48), updated_at: null },
+    // No branch: applies everywhere, so it must not have to be written five times.
+    { id: "nt2", station_id: null, station_name: "All branches",
+      body: "Shift starts 6am and ends 6pm", pinned: false,
+      author: "Owner", created_at: iso(24), updated_at: iso(2) }
+  ],
   admin_resolve_correction: { success: true, message: "sale corrected" },
   admin_backup: {
     magpms_backup_version: 1, generated_at: "2026-07-31T21:00:00Z", timezone: "Africa/Addis_Ababa",
@@ -564,6 +576,55 @@ console.log("\n[11] backup");
   ok("and no counts are shown for it",
      (await page.locator("#bkCounts").textContent()).trim() === "");
   await page.evaluate(() => { window.__override = {}; });
+}
+
+console.log("\n[12] private notes");
+
+/* The things worth remembering about a branch that are not a transaction.
+   Admin only, and firmly so: a note may say "check Abebe's readings on pump
+   4", which is reasonable to write and corrosive for Abebe to find. */
+{
+  await page.click('.mi[data-s="notes"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#noteList").textContent.includes("Benzil"), null, { timeout: 5000 });
+
+  const list = await page.locator("#noteList").textContent();
+  ok("a branch note is shown", /Pumps 1 and 2 are Benzil/.test(list), list);
+  ok("so is a business-wide one", /Shift starts 6am/.test(list), list);
+  ok("each says which branch it is about", /Adama/.test(list) && /All branches/.test(list), list);
+  ok("a pinned note is marked", (await page.locator("#noteList .tag").count()) >= 1);
+  ok("an edited note says so", /edited/.test(list), list);
+
+  ok("the page says staff never see them",
+     /never see these/i.test(await page.locator("#sec-notes").textContent()));
+
+  // An empty note is refused rather than saved as a blank row.
+  await page.click("#noteBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#noteMsg").textContent.length > 0, null, { timeout: 5000 });
+  ok("an empty note is refused",
+     /write something/i.test(await page.locator("#noteMsg").textContent()));
+  ok("and nothing was sent",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_add_note"));
+
+  await page.fill("#noteBody", "Tank 3 gauge reads low");
+  await page.click("#notePin");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("admin_add_note"), null, { timeout: 5000 });
+  ok("a pinned note saves", true);
+  ok("and the box is cleared for the next one",
+     (await page.locator("#noteBody").inputValue()) === "");
+
+  /* Deleting asks first: a note is the only thing here that cannot be
+     reconstructed from anything else. */
+  await page.click('[data-act="note-delete"]');
+  await page.waitForSelector("#uiModal.open", { timeout: 5000 });
+  const dlg = await page.locator("#uiModal").textContent();
+  ok("deleting asks first", /Delete this note/i.test(dlg), dlg);
+  ok("and says it cannot be recovered", /cannot be recovered/i.test(dlg), dlg);
+  await page.click("#umCancel");
+  ok("cancelling deletes nothing",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_delete_note"));
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));

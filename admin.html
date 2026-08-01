@@ -36,6 +36,7 @@
   <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
   <div class="mi" data-s="corrections"><span class="ic">🛠</span> Corrections</div>
   <div class="mi" data-s="reports"><span class="ic">📈</span> Reports</div>
+  <div class="mi" data-s="notes"><span class="ic">📝</span> Notes</div>
   <div class="mi" data-s="backup"><span class="ic">💾</span> Backup</div>
 </nav>
 
@@ -360,6 +361,35 @@
           <tbody id="stfBody"><tr><td colspan="10" class="empty">Choose a range above and run it</td></tr></tbody>
         </table>
       </div>
+    </div>
+  </div>
+
+  <!-- ===== PRIVATE NOTES ===== -->
+  <div class="section" id="sec-notes">
+    <h1 class="display">Notes</h1>
+    <div class="sub" id="noteSub">Private to admins</div>
+    <div class="card">
+      <p class="card-note">The things about a branch that are worth remembering and are not a
+        transaction — which pumps are Benzil, when the shift starts, that tank 3's gauge reads low.
+        <strong>Staff never see these</strong>, at any branch. Pin one to keep it at the top.</p>
+      <div class="field">
+        <label for="noteBody">Note</label>
+        <input type="text" id="noteBody" placeholder="Pumps 1 and 2 are Benzil, the rest Diesel"/>
+      </div>
+      <div class="field">
+        <label for="noteScope">About</label>
+        <select id="noteScope"></select>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-gold" id="noteBtn">📝 Save note</button>
+        <button class="btn btn-blue" id="notePin">📌 Save pinned</button>
+      </div>
+      <div class="msg" id="noteMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Saved</h2>
+      <div id="noteList" class="empty">Loading...</div>
     </div>
   </div>
 
@@ -990,6 +1020,61 @@ function csvCell(v) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
+/* ---------- private notes ---------- */
+/* The "About" list is filled from the rail's stations so a note can be filed
+   against one branch or against the business. A note with no branch shows on
+   every branch, because "shift starts at 6" is as true at Hirna as anywhere
+   and should not have to be written five times. */
+function fillNoteScope() {
+  const sel = $("noteScope");
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">All branches</option>' +
+    stations.map(st => `<option value="${esc(st.id)}">${esc(st.name)}</option>`).join("");
+  if (keep) sel.value = keep;
+  else if (selected !== "all") sel.value = selected;
+}
+
+async function loadNotes() {
+  fillNoteScope();
+  $("noteSub").textContent = selected === "all"
+    ? "Private to admins - every branch"
+    : `Private to admins - ${stationName(selected)}`;
+  try {
+    const rows = await rpc("admin_list_notes",
+      { p_station_id: stationParam(), p_limit: 200 }) || [];
+    const list = $("noteList");
+    list.className = rows.length ? "" : "empty";
+    list.innerHTML = rows.length ? rows.map(n => `
+      <div class="row"><div class="info">
+        <h3>${esc(n.body)}</h3>
+        <p>${esc(n.station_name)} · ${esc(n.author || "—")} · ${esc(fmt.stamp(n.created_at))}${
+          n.updated_at ? " · edited" : ""}</p>
+        ${n.pinned ? '<span class="tag open">pinned</span>' : ""}
+      </div>
+      <div style="display:grid;gap:6px;justify-items:end">
+        <button class="btn btn-ghost" data-act="note-pin" data-id="${esc(n.id)}"
+                data-pinned="${n.pinned ? "1" : ""}">${n.pinned ? "Unpin" : "Pin"}</button>
+        <button class="btn btn-no" data-act="note-delete" data-id="${esc(n.id)}">Delete</button>
+      </div></div>`).join("")
+      : "Nothing written yet";
+  } catch (e) { failPanel("noteList", "notes"); loadFailed("loadNotes", e); }
+}
+
+async function addNote(pinned) {
+  const body = $("noteBody").value.trim();
+  if (!body) { msg("noteMsg", "Write something first", "error"); return; }
+  const btn = pinned ? $("notePin") : $("noteBtn");
+  btn.disabled = true;
+  try {
+    const r = await rpc("admin_add_note", {
+      p_body: body, p_station_id: $("noteScope").value || null, p_pinned: !!pinned
+    });
+    msg("noteMsg", r.message || (r.success ? "Saved" : "Failed"), r.success ? "success" : "error");
+    if (r.success) { $("noteBody").value = ""; toast("Note saved ✔", "ok"); loadNotes(); }
+  } catch (e) { msg("noteMsg", "Connection error", "error"); loadFailed("addNote", e); }
+  finally { btn.disabled = false; }
+}
+
 /* ---------- backup ---------- */
 /* A JSON backup must NOT carry the UTF-8 BOM that downloadCsv adds. Excel
    wants that byte; JSON.parse chokes on it, and this file exists to be read
@@ -1374,6 +1459,25 @@ function bindRowActions() {
           if (r.success) { loadCustomers(); loadDashboard(); }
           break;
         }
+        case "note-pin": {
+          const r = await rpc("admin_set_note",
+            { p_note_id: id, p_pinned: !el.getAttribute("data-pinned") });
+          toast(r.message || "Updated", r.success ? "ok" : "err");
+          loadNotes();
+          break;
+        }
+        case "note-delete": {
+          /* Asked for, because a note is the only thing here that cannot be
+             reconstructed from anything else - there is no second copy of
+             somebody's own words. */
+          const okDel = await confirmDlg("Delete this note",
+            "It cannot be recovered. Nothing else in the app holds a copy.", "Delete");
+          if (!okDel) return;
+          const r = await rpc("admin_delete_note", { p_note_id: id });
+          toast(r.message || "Deleted", r.success ? "ok" : "err");
+          loadNotes();
+          break;
+        }
         case "admin-close-shift": {
           const noz = el.getAttribute("data-nozzle");
           const who = el.getAttribute("data-staff");
@@ -1463,6 +1567,7 @@ const LOADERS = {
   /* The backup is the whole database, so it is not branch-scoped and has
      nothing to fetch on arrival. Clearing the last run's counts stops one
      download's figures being read as another's. */
+  notes: loadNotes,
   backup: async () => { $("bkCounts").innerHTML = ""; msg("bkMsg", "", ""); },
   /* A report belongs to the branch and range it was run for. Clearing beats
      leaving one branch's figures sitting under another branch's heading. */
@@ -1539,6 +1644,8 @@ function bind() {
   $("stfBtn").addEventListener("click", runStaffReport);
   $("stfCsv").addEventListener("click", exportStaffReport);
   $("bkBtn").addEventListener("click", downloadBackup);
+  $("noteBtn").addEventListener("click", () => addNote(false));
+  $("notePin").addEventListener("click", () => addNote(true));
 
   $("shiftDays").addEventListener("click", e => {
     const t = e.target.closest("[data-days]");
