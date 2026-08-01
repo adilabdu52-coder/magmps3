@@ -377,9 +377,33 @@
         <input type="text" id="noteBody" placeholder="Pumps 1 and 2 are Benzil, the rest Diesel"/>
       </div>
       <div class="field">
-        <label for="noteScope">About</label>
+        <label for="noteScope">Branch</label>
         <select id="noteScope"></select>
       </div>
+
+      <!-- Optional. A note that is only a sentence still works, and most will
+           be - but when the note IS a shift, typing it as prose gives you a
+           paragraph nobody can add up. -->
+      <div class="divider"></div>
+      <p class="card-note">Recording a shift? Fill in as much as you have. Leave it all blank for
+        an ordinary note.</p>
+      <div class="grid2">
+        <div class="field"><label for="noteStaff">Staff</label>
+          <select id="noteStaff"></select></div>
+        <div class="field"><label for="noteNozzle">Pump</label>
+          <select id="noteNozzle"></select></div>
+        <div class="field"><label for="noteStart">Start meter</label>
+          <input type="number" id="noteStart" step="0.01" min="0" inputmode="decimal"/></div>
+        <div class="field"><label for="noteEnd">End meter</label>
+          <input type="number" id="noteEnd" step="0.01" min="0" inputmode="decimal"/></div>
+      </div>
+      <!-- One box per fuel the branch actually sells, built from the database.
+           Not two boxes labelled diesel and petrol: a branch that starts
+           selling a third fuel gets a third box with no code change, and the
+           CI check would fail the build for hard-coding a fuel name anyway. -->
+      <div class="grid2" id="noteFuels"></div>
+      <div class="field-hint" id="noteSum"></div>
+
       <div class="report-actions">
         <button class="btn btn-gold" id="noteBtn">📝 Save note</button>
         <button class="btn btn-blue" id="notePin">📌 Save pinned</button>
@@ -1034,8 +1058,64 @@ function fillNoteScope() {
   else if (selected !== "all") sel.value = selected;
 }
 
+/* The staff, pump and fuel boxes are all built from the branch chosen for the
+   note - not from the rail - because a note about Hirna should offer Hirna's
+   people and Hirna's pumps whatever page you happen to be looking at. */
+async function fillNoteFields() {
+  const st = $("noteScope").value || null;
+  try {
+    const [staff, nozzles, prices] = await Promise.all([
+      rpc("admin_list_staff"),
+      rpc("list_nozzles", { p_station_id: st }),
+      rpc("get_prices", { p_station_id: st })
+    ]);
+
+    const people = (staff || []).filter(x =>
+      x.role !== "admin" && (!st || x.station_id === st));
+    $("noteStaff").innerHTML = '<option value="">— nobody —</option>' +
+      people.map(x => `<option value="${esc(x.id)}">${esc(x.full_name || x.email)}</option>`).join("");
+
+    $("noteNozzle").innerHTML = '<option value="">— no pump —</option>' +
+      (nozzles || []).map(n =>
+        `<option value="${esc(n.id)}">${esc(n.label)}${st ? "" : " · " + esc(n.station_name || "")}</option>`).join("");
+
+    /* Fuels from the branch's prices, falling back to its pumps: either way
+       the list is what that branch actually sells. */
+    const fuels = [...new Set([
+      ...(prices || []).map(p => p.fuel_type),
+      ...(nozzles || []).map(n => n.fuel_type)
+    ])].filter(Boolean).sort();
+
+    $("noteFuels").innerHTML = fuels.map(f =>
+      `<div class="field"><label>${esc(f)} litres</label>
+        <input type="number" data-note-fuel="${esc(f)}" step="0.01" min="0" inputmode="decimal"/></div>`).join("");
+    noteSum();
+  } catch (e) { loadFailed("fillNoteFields", e); }
+}
+
+/* Shows the fuels added up against what the meter moved, while it is still
+   being typed. Two numbers that should agree are worth putting side by side
+   at the moment somebody can still fix them. */
+function noteSum() {
+  const fuels = [...document.querySelectorAll("#noteFuels input[data-note-fuel]")];
+  const total = fuels.reduce((a, i) => a + (parseFloat(i.value) || 0), 0);
+  const from = parseFloat($("noteStart").value), to = parseFloat($("noteEnd").value);
+  const metered = (Number.isFinite(from) && Number.isFinite(to)) ? to - from : null;
+
+  if (!total && metered == null) { $("noteSum").textContent = ""; return; }
+  let t = `Fuels add up to ${fmt.int(total)} L`;
+  if (metered != null) {
+    t += ` · meter moved ${fmt.int(metered)} L`;
+    const gap = total - metered;
+    t += Math.abs(gap) < 0.5 ? " · they agree"
+       : ` · ${fmt.int(Math.abs(gap))} L ${gap > 0 ? "more written than metered" : "less written than metered"}`;
+  }
+  $("noteSum").textContent = t;
+}
+
 async function loadNotes() {
   fillNoteScope();
+  fillNoteFields();
   $("noteSub").textContent = selected === "all"
     ? "Private to admins - every branch"
     : `Private to admins - ${stationName(selected)}`;
@@ -1046,10 +1126,24 @@ async function loadNotes() {
     list.className = rows.length ? "" : "empty";
     list.innerHTML = rows.length ? rows.map(n => `
       <div class="row"><div class="info">
-        <h3>${esc(n.body)}</h3>
+        <h3>${esc(n.body || "(shift record)")}</h3>
         <p>${esc(n.station_name)} · ${esc(n.author || "—")} · ${esc(fmt.stamp(n.created_at))}${
           n.updated_at ? " · edited" : ""}</p>
+        ${n.staff_name || n.nozzle_label || n.metered_liters != null ? `<p>${
+          [n.staff_name && esc(n.staff_name),
+           n.nozzle_label && esc(n.nozzle_label),
+           n.metered_liters != null
+             ? `meter ${fmt.int(n.start_meter)} → ${fmt.int(n.end_meter)} (${fmt.int(n.metered_liters)} L)`
+             : null,
+           n.fuel_liters ? Object.entries(n.fuel_liters).map(([f, l]) =>
+             `${esc(f)} ${fmt.int(l)} L`).join(", ") : null
+          ].filter(Boolean).join(" · ")}</p>` : ""}
         ${n.pinned ? '<span class="tag open">pinned</span>' : ""}
+        ${/* Two numbers that should agree, said plainly when they do not. */ ""}
+        ${n.metered_liters != null && n.noted_liters != null
+            && Math.abs(Number(n.noted_liters) - Number(n.metered_liters)) >= 0.5
+          ? `<span class="tag rejected">fuels and meter disagree by ${
+              fmt.int(Math.abs(Number(n.noted_liters) - Number(n.metered_liters)))} L</span>` : ""}
       </div>
       <div style="display:grid;gap:6px;justify-items:end">
         <button class="btn btn-ghost" data-act="note-pin" data-id="${esc(n.id)}"
@@ -1062,15 +1156,42 @@ async function loadNotes() {
 
 async function addNote(pinned) {
   const body = $("noteBody").value.trim();
-  if (!body) { msg("noteMsg", "Write something first", "error"); return; }
+  const num = id => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
+
+  const fuels = {};
+  document.querySelectorAll("#noteFuels input[data-note-fuel]").forEach(i => {
+    const v = parseFloat(i.value);
+    if (Number.isFinite(v) && v > 0) fuels[i.getAttribute("data-note-fuel")] = v;
+  });
+  const anyFuel = Object.keys(fuels).length > 0;
+
+  const staff = $("noteStaff").value || null, nozzle = $("noteNozzle").value || null;
+  const start = num("noteStart"), end = num("noteEnd");
+
+  /* Figures alone are a record; a sentence alone is a note. Neither is
+     nothing, and that is the only case worth refusing. */
+  if (!body && !staff && !nozzle && start == null && end == null && !anyFuel) {
+    msg("noteMsg", "Write something first", "error"); return;
+  }
+
   const btn = pinned ? $("notePin") : $("noteBtn");
   btn.disabled = true;
   try {
     const r = await rpc("admin_add_note", {
-      p_body: body, p_station_id: $("noteScope").value || null, p_pinned: !!pinned
+      p_body: body, p_station_id: $("noteScope").value || null, p_pinned: !!pinned,
+      p_staff_id: staff, p_nozzle_id: nozzle,
+      p_start_meter: start, p_end_meter: end,
+      p_fuel_liters: anyFuel ? fuels : null
     });
     msg("noteMsg", r.message || (r.success ? "Saved" : "Failed"), r.success ? "success" : "error");
-    if (r.success) { $("noteBody").value = ""; toast("Note saved ✔", "ok"); loadNotes(); }
+    if (r.success) {
+      $("noteBody").value = "";
+      ["noteStart", "noteEnd"].forEach(i => { $(i).value = ""; });
+      document.querySelectorAll("#noteFuels input[data-note-fuel]").forEach(i => { i.value = ""; });
+      noteSum();
+      toast("Note saved ✔", "ok");
+      loadNotes();
+    }
   } catch (e) { msg("noteMsg", "Connection error", "error"); loadFailed("addNote", e); }
   finally { btn.disabled = false; }
 }
@@ -1646,6 +1767,11 @@ function bind() {
   $("bkBtn").addEventListener("click", downloadBackup);
   $("noteBtn").addEventListener("click", () => addNote(false));
   $("notePin").addEventListener("click", () => addNote(true));
+  $("noteScope").addEventListener("change", fillNoteFields);
+  ["noteStart", "noteEnd"].forEach(i => $(i).addEventListener("input", noteSum));
+  document.addEventListener("input", e => {
+    if (e.target.hasAttribute && e.target.hasAttribute("data-note-fuel")) noteSum();
+  });
 
   $("shiftDays").addEventListener("click", e => {
     const t = e.target.closest("[data-days]");
