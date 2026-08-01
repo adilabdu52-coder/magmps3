@@ -842,7 +842,8 @@ function shiftRow(s) {
     <td class="mono">${s.metered_liters == null ? "—" : fmt.int(s.metered_liters)}</td>
     <td class="mono">${fmt.int(s.sold_liters)}</td>
     <td class="delta ${cls}">${v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2)}</td>
-    <td><span class="tag ${open ? "open" : "closed"}">${open ? "open" : "closed"}</span></td></tr>`;
+    <td><span class="tag ${s.abandoned ? "rejected" : open ? "open" : "closed"}"
+        >${s.abandoned ? "abandoned" : open ? "open" : "closed"}</span></td></tr>`;
 }
 
 async function loadAttendance(p) {
@@ -855,8 +856,12 @@ async function loadAttendance(p) {
         <td>${esc(a.station_name)}</td>
         <td>${esc(a.staff_name || "—")}</td>
         <td class="mono">${a.check_out ? esc(fmt.stamp(a.check_out)) : "—"}</td>
-        <td class="mono">${Number(a.hours || 0).toFixed(2)}</td>
-        <td><span class="tag ${on ? "open" : "closed"}">${on ? "on duty" : "done"}</span></td></tr>`;
+        <!-- Null hours means abandoned: nobody knows when that person went
+             home, so the column says nothing rather than a guess. A number
+             here could end up settling an argument about pay. -->
+        <td class="mono">${a.hours == null ? "—" : Number(a.hours).toFixed(2)}</td>
+        <td><span class="tag ${a.abandoned ? "rejected" : on ? "open" : "closed"}"
+            >${a.abandoned ? "no check-out" : on ? "on duty" : "done"}</span></td></tr>`;
     }).join("")
       : `<tr><td colspan="6" class="empty">Nobody checked in during the last ${Number(shiftDays)} days</td></tr>`;
   } catch (e) { failRows("attBody", 6, "attendance"); loadFailed("loadAttendance", e); }
