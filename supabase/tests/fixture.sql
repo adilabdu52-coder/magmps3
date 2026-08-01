@@ -1,5 +1,15 @@
 -- The schema as it stands after 0001-0006, rebuilt directly rather than
--- migrated, so 0007 and 0008 can be run against something real.
+-- migrated, so the later migrations can be run against something real.
+--
+-- station_id is NULLABLE everywhere, because that is what 0002 actually does:
+--
+--   alter table %I add column if not exists station_id uuid references stations(id)
+--
+-- This file used to declare it NOT NULL. A fixture stricter than production
+-- does not catch bugs, it hides them - and it hid one: a staff member with no
+-- branch could write a shift and an attendance row with no branch, which the
+-- manager's page then dropped on an inner join. Against this fixture that
+-- insert raised instead, so the fault was invisible until 0015 went looking.
 
 create schema if not exists auth;
 create table auth.users (id uuid primary key, email text);
@@ -24,19 +34,19 @@ create table staff (
 
 create table tanks (
   id serial primary key,
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   tank_name text, fuel_type text,
   capacity_liters numeric, current_liters numeric);
 
 create table credit_customers (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   name text, phone text, plate_no text,
   credit_limit numeric default 0, balance numeric default 0);
 
 create table sales (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   staff_id uuid references staff(id),
   fuel_type text, liters numeric, total_etb numeric,
   payment_method text, credit_customer_id uuid references credit_customers(id),
@@ -45,39 +55,39 @@ create table sales (
 
 create table fuel_prices (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   fuel_type text, price_per_liter numeric);
 create unique index fuel_prices_station_fuel_key on fuel_prices (station_id, fuel_type);
 
 create table shifts (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   staff_id uuid references staff(id),
   opening_meter numeric, closing_meter numeric,
   opened_at timestamptz, closed_at timestamptz);
 
 create table attendance (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   staff_id uuid references staff(id),
   check_in timestamptz, check_out timestamptz);
 
 create table expenses (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   category text, description text, amount_etb numeric,
   created_at timestamptz not null default now());
 
 create table deliveries (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   tank_id int references tanks(id),
   liters numeric, note text, recorded_by uuid references staff(id),
   created_at timestamptz not null default now());
 
 create table price_history (
   id uuid primary key default gen_random_uuid(),
-  station_id uuid not null references stations(id),
+  station_id uuid references stations(id),
   fuel_type text not null, old_price numeric, new_price numeric not null,
   changed_by uuid references staff(id),
   changed_at timestamptz not null default now());

@@ -32,14 +32,23 @@ const SHIFTS = [
     metered_liters: 150, sold_liters: 152, variance_liters: -2 },        // -2, green
   { id: "sh3", station_id: "s-adama", station_name: "Adama", staff_name: "Hana Tesfaye",
     opened_at: iso(2), closed_at: null, opening_meter: 1400, closing_meter: null,
-    metered_liters: null, sold_liters: 60, variance_liters: null }       // open
+    metered_liters: null, sold_liters: 60, variance_liters: null },      // open
+  // Left open overnight: no closing meter was ever read, so no variance can
+  // exist. It must not be shown as merely "open" alongside a live shift.
+  { id: "sh4", station_id: "s-adama", station_name: "Adama", staff_name: "Kebede Alemu",
+    opened_at: iso(50), closed_at: null, opening_meter: 900, closing_meter: null,
+    metered_liters: null, sold_liters: 0, variance_liters: null, abandoned: true }
 ];
 
 const ATT = [
   { id: "a1", station_id: "s-adama", station_name: "Adama", staff_name: "Abebe Kebede",
     check_in: iso(30), check_out: iso(22), hours: 8 },
   { id: "a2", station_id: "s-adama", station_name: "Adama", staff_name: "Hana Tesfaye",
-    check_in: iso(2), check_out: null, hours: 2.03 }
+    check_in: iso(2), check_out: null, hours: 2.03 },
+  // A forgotten check-out. hours is null on purpose: nobody knows when they
+  // went home, and the old code would have shown 50.00 and counting.
+  { id: "a3", station_id: "s-adama", station_name: "Adama", staff_name: "Kebede Alemu",
+    check_in: iso(50), check_out: null, hours: null, abandoned: true }
 ];
 
 const REPORT = [
@@ -171,8 +180,8 @@ ok("list_expenses NOT called before opening the section", !calls.includes("list_
 
 console.log("\n[2] shifts & attendance");
 await page.click('.mi[data-s="shifts"]');
-await page.waitForFunction(() => document.querySelectorAll("#shiftBody tr").length === 3, null, { timeout: 5000 });
-ok("three shift rows", (await page.locator("#shiftBody tr").count()) === 3);
+await page.waitForFunction(() => document.querySelectorAll("#shiftBody tr").length === 4, null, { timeout: 5000 });
+ok("four shift rows", (await page.locator("#shiftBody tr").count()) === 4);
 
 const variances = await page.locator("#shiftBody td.delta").allTextContents();
 ok("positive variance is signed", variances[0].trim() === "+10.00", `got ${JSON.stringify(variances[0])}`);
@@ -185,14 +194,24 @@ ok("missing fuel flagged red", upCls.includes("up"), upCls);
 ok("surplus flagged green", dnCls.includes("down"), dnCls);
 
 const tags = await page.locator("#shiftBody .tag").allTextContents();
-ok("shift status tags", tags.join(",") === "closed,closed,open", tags.join(","));
+/* A shift left open overnight reads as "abandoned", not as "open" alongside
+   somebody genuinely at the pump right now. The two mean opposite things:
+   one needs no action, the other needs asking about. */
+ok("shift status tags", tags.join(",") === "closed,closed,open,abandoned", tags.join(","));
 
 const apos = await page.locator("#shiftBody tr:nth-child(2) td:nth-child(3)").textContent();
 ok("apostrophe in a name survives", apos.includes("O'Brien"), apos);
 
-ok("attendance rows", (await page.locator("#attBody tr").count()) === 2);
+ok("attendance rows", (await page.locator("#attBody tr").count()) === 3);
 const attTags = await page.locator("#attBody .tag").allTextContents();
-ok("on-duty tag for an open check-in", attTags.join(",") === "done,on duty", attTags.join(","));
+ok("on-duty tag for an open check-in",
+   attTags.join(",") === "done,on duty,no check-out", attTags.join(","));
+
+/* Hours must be blank on a forgotten check-out. The old code ran them to
+   now(), so a Monday check-in with no check-out read as 50 hours and rising -
+   a number that is not merely wrong but would be quoted in a wage argument. */
+const attHours = await page.locator("#attBody tr:nth-child(3) td:nth-child(5)").textContent();
+ok("no invented hours for a forgotten check-out", attHours.trim() === "—", attHours);
 
 console.log("\n[3] reports");
 await page.click('.mi[data-s="reports"]');
