@@ -25,18 +25,18 @@ const iso = h => new Date(Date.now() - h * 3600e3).toISOString();
 
 const SHIFTS = [
   { id: "sh1", station_id: "s-adama", station_name: "Adama", staff_name: "Abebe Kebede",
-    opened_at: iso(30), closed_at: iso(22), opening_meter: 1000, closing_meter: 1250,
+    nozzle_label: "N1", opened_at: iso(30), closed_at: iso(22), opening_meter: 1000, closing_meter: 1250,
     metered_liters: 250, sold_liters: 240, variance_liters: 10 },        // +10, red
   { id: "sh2", station_id: "s-adama", station_name: "Adama", staff_name: "Sara O'Brien",
-    opened_at: iso(20), closed_at: iso(12), opening_meter: 1250, closing_meter: 1400,
+    nozzle_label: "N2", opened_at: iso(20), closed_at: iso(12), opening_meter: 1250, closing_meter: 1400,
     metered_liters: 150, sold_liters: 152, variance_liters: -2 },        // -2, green
   { id: "sh3", station_id: "s-adama", station_name: "Adama", staff_name: "Hana Tesfaye",
-    opened_at: iso(2), closed_at: null, opening_meter: 1400, closing_meter: null,
+    nozzle_label: "N1", opened_at: iso(2), closed_at: null, opening_meter: 1400, closing_meter: null,
     metered_liters: null, sold_liters: 60, variance_liters: null },      // open
   // Left open overnight: no closing meter was ever read, so no variance can
   // exist. It must not be shown as merely "open" alongside a live shift.
   { id: "sh4", station_id: "s-adama", station_name: "Adama", staff_name: "Kebede Alemu",
-    opened_at: iso(50), closed_at: null, opening_meter: 900, closing_meter: null,
+    nozzle_label: "N3", opened_at: iso(50), closed_at: null, opening_meter: 900, closing_meter: null,
     metered_liters: null, sold_liters: 0, variance_liters: null, abandoned: true }
 ];
 
@@ -202,6 +202,11 @@ ok("shift status tags", tags.join(",") === "closed,closed,open,abandoned", tags.
 const apos = await page.locator("#shiftBody tr:nth-child(2) td:nth-child(3)").textContent();
 ok("apostrophe in a name survives", apos.includes("O'Brien"), apos);
 
+/* A variance names a person, but a meter is the thing that can be wrong.
+   Without the nozzle the column cannot point at a pump. */
+const nozCol = await page.locator("#shiftBody tr:nth-child(1) td:nth-child(4)").textContent();
+ok("the shift says which nozzle", nozCol.trim() === "N1", nozCol);
+
 ok("attendance rows", (await page.locator("#attBody tr").count()) === 3);
 const attTags = await page.locator("#attBody .tag").allTextContents();
 ok("on-duty tag for an open check-in",
@@ -221,6 +226,14 @@ ok("30-day preset filled the pickers", (await page.locator("#repFrom").inputValu
 await page.click("#repBtn");
 await page.waitForFunction(() => document.querySelectorAll("#repBody tr").length === 3, null, { timeout: 5000 });
 ok("report rows", (await page.locator("#repBody tr").count()) === 3);
+
+/* One row per day per branch with a column per fuel, rather than one row per
+   fuel. Comparing diesel against petrol used to mean reading two rows that
+   were not next to each other - on a phone, often not the same screen. */
+const head = await page.locator("#repHead").textContent();
+ok("a column per fuel sold", /Diesel L/.test(head) && /Benzil L/.test(head), head);
+ok("fuel columns come from the data, not the markup",
+   head.indexOf("Diesel") < head.indexOf("Sales"), head);
 ok("CSV enabled after a run", await page.locator("#repCsv").isEnabled());
 
 const stats = await page.locator("#repStats .val").allTextContents();
@@ -235,10 +248,14 @@ const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#repC
 const csv = await readFile(await dl.path(), "utf8");
 ok("filename carries branch and range", /^magpms-sales-all-sites-\d{4}-\d{2}-\d{2}-to-\d{4}-\d{2}-\d{2}\.csv$/.test(dl.suggestedFilename()), dl.suggestedFilename());
 ok("BOM present for Excel", csv.charCodeAt(0) === 0xfeff);
-ok("header row", csv.includes('"Day","Site","Fuel","Sales","Litres","ETB"'));
+/* The CSV matches the table on screen, a column per fuel. A file laid out
+   differently from what was checked is a file nobody trusts. */
+ok("header row", csv.includes('"Day","Site","Benzil L","Diesel L","Sales","Total ETB"'),
+   csv.split("\r\n")[0]);
 ok("formula cell neutralised", csv.includes(`"'=cmd|' /C calc'!A0"`), csv.split("\r\n")[2]);
 ok("no bare formula cell", !/,"=cmd/.test(csv));
-ok("totals row", csv.includes('"Total","","","23","840","81300.00"'), csv.split("\r\n").pop());
+ok("totals row", csv.includes('"Total","","60","780","23","81300.00"'), csv.split("\r\n").pop());
+// 60 + 780 is the 840 litres the old flat layout reported, split by fuel.
 
 console.log("\n[5] switching branch clears a stale report");
 await page.click('#rail [data-site="s-adama"]');

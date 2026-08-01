@@ -13,6 +13,23 @@ const ok = (name, cond, extra = "") => {
   else { failures++; console.log(`  FAIL  ${name}${extra ? "\n        " + extra : ""}`); }
 };
 
+const NOZZLES = [
+  { id: "n1", station_id: "s-adama", station_name: "Adama", label: "N1",
+    fuel_type: "Diesel", active: true, open_shift_id: null, open_by: null },
+  { id: "n2", station_id: "s-adama", station_name: "Adama", label: "N2",
+    fuel_type: "Benzil", active: true, open_shift_id: null, open_by: null },
+  // Somebody else is on this one, so it must not be offered.
+  { id: "n3", station_id: "s-adama", station_name: "Adama", label: "N3",
+    fuel_type: "Diesel", active: true, open_shift_id: "sh9", open_by: "Chaltu" }
+];
+
+const OPEN_SHIFTS = [
+  { id: "sh1", nozzle_id: "n1", nozzle_label: "N1", fuel_type: "Diesel",
+    opened_at: new Date().toISOString(), opening_meter: 1000, sold_liters: 40 },
+  { id: "sh2", nozzle_id: "n2", nozzle_label: "N2", fuel_type: "Benzil",
+    opened_at: new Date().toISOString(), opening_meter: 5000, sold_liters: 10 }
+];
+
 const TANKS = [
   { id: 1, station_id: "s-adama", tank_name: "Tank 1", fuel_type: "Benzil",
     current_liters: 30000, capacity_liters: 50000 }
@@ -261,6 +278,75 @@ console.log("\n[6] reporting a sale that was rung up wrong");
   ok("the cashier can see what happened to it", /fixed/i.test(mine), mine);
   ok("including the numbers that changed", /1,000/.test(mine) && /100/.test(mine), mine);
 
+  await ctx.close();
+}
+
+console.log("\n[7] a shift belongs to a nozzle");
+
+/* A meter belongs to a pump, not to a person. Working two pumps means two
+   shifts, and selling is limited to the pumps you have opened - which is what
+   keeps a meter reading matching what came out of it. */
+{
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: {
+      list_nozzles: NOZZLES,
+      my_open_shifts: OPEN_SHIFTS,
+      get_prices: [{ fuel_type: "Diesel", price_per_liter: 100 },
+                   { fuel_type: "Benzil", price_per_liter: 90 }],
+      my_sales_today: [], list_tanks: TANKS
+    }
+  });
+  await page.click('.mi[data-s="shift"]');
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#openNozzle option").length > 0, null, { timeout: 5000 });
+
+  const free = await page.locator("#openNozzle option").allTextContents();
+  ok("only free nozzles can be opened", free.length === 2, JSON.stringify(free));
+  ok("one already in use is not offered", !free.join(" ").includes("N3"), JSON.stringify(free));
+  ok("the fuel is shown with the nozzle", /Diesel/.test(free.join(" ")), JSON.stringify(free));
+
+  /* Each open shift needs its own closing box. One shared box would ask which
+     pump the reading belongs to, and a wrong answer is a false variance on
+     two pumps at once. */
+  ok("every open shift has its own close button",
+     (await page.locator("[data-close-shift]").count()) === 2);
+  const list = await page.locator("#openShiftList").textContent();
+  ok("each names its nozzle", /N1/.test(list) && /N2/.test(list), list);
+  ok("and what it has sold", /40/.test(list) && /10/.test(list), list);
+
+  const banner = await page.locator("#shiftBanner2").textContent();
+  ok("the banner counts the pumps", /2 pumps open/.test(banner), banner);
+
+  // Selling is limited to the pumps this person has open.
+  await page.click('.mi[data-s="pos"]');
+  const sellable = await page.locator("#sNozzle option").allTextContents();
+  ok("only opened nozzles can be sold from", sellable.length === 2, JSON.stringify(sellable));
+  ok("N3 is not sellable either", !sellable.join(" ").includes("N3"), JSON.stringify(sellable));
+
+  /* The price follows the nozzle. A separate fuel picker could disagree with
+     the pump, and then stock and takings drift apart. */
+  await page.selectOption("#sNozzle", "n2");
+  await page.fill("#sLiters", "10");
+  await page.waitForFunction(() =>
+    document.querySelector("#liveTotal").textContent.includes("90"), null, { timeout: 5000 });
+  const total = await page.locator("#liveTotal").textContent();
+  ok("the price comes from the nozzle's fuel", /900/.test(total) && /90\.00\/L/.test(total), total);
+
+  await ctx.close();
+}
+
+{ // with nothing open, selling is impossible and says why
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: { list_nozzles: NOZZLES, my_open_shifts: [], my_sales_today: [], list_tanks: TANKS }
+  });
+  await page.click('.mi[data-s="pos"]');
+  await page.waitForFunction(() =>
+    document.getElementById("saleBtn").disabled === true, null, { timeout: 5000 });
+  ok("the sale button is disabled with no shift", await page.locator("#saleBtn").isDisabled());
+  ok("and the nozzle box says what to do",
+     (await page.locator("#sNozzle").textContent()).includes("Open a shift first"));
   await ctx.close();
 }
 

@@ -155,10 +155,10 @@
       </div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Opened</th><th>Site</th><th>Staff</th>
+          <thead><tr><th>Opened</th><th>Site</th><th>Staff</th><th>Nozzle</th>
             <th class="mono">Meter</th><th class="mono">Metered L</th>
             <th class="mono">Sold L</th><th class="mono">Variance</th><th>Status</th></tr></thead>
-          <tbody id="shiftBody"><tr><td colspan="8" class="empty">Loading...</td></tr></tbody>
+          <tbody id="shiftBody"><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -326,8 +326,9 @@
       <div class="divider"></div>
       <div class="table-scroll">
         <table>
-          <thead><tr><th>Day</th><th>Site</th><th>Fuel</th>
-            <th class="mono">Sales</th><th class="mono">Litres</th><th class="mono">ETB</th></tr></thead>
+          <!-- Rebuilt when the report runs: one column per fuel actually sold. -->
+          <thead id="repHead"><tr><th>Day</th><th>Site</th>
+            <th class="mono">Sales</th><th class="mono">Total ETB</th></tr></thead>
           <tbody id="repBody"><tr><td colspan="6" class="empty">Choose a range and run the report</td></tr></tbody>
         </table>
       </div>
@@ -823,8 +824,8 @@ async function loadShifts(p) {
   try {
     const rows = await rpc("list_shifts", p) || [];
     $("shiftBody").innerHTML = rows.length ? rows.map(shiftRow).join("")
-      : `<tr><td colspan="8" class="empty">No shifts opened in the last ${Number(shiftDays)} days</td></tr>`;
-  } catch (e) { failRows("shiftBody", 8, "shifts"); loadFailed("loadShifts", e); }
+      : `<tr><td colspan="9" class="empty">No shifts opened in the last ${Number(shiftDays)} days</td></tr>`;
+  } catch (e) { failRows("shiftBody", 9, "shifts"); loadFailed("loadShifts", e); }
 }
 
 /* Variance is metered minus sold. Positive means fuel left the pump that was
@@ -838,6 +839,9 @@ function shiftRow(s) {
     <td class="mono">${esc(fmt.stamp(s.opened_at))}</td>
     <td>${esc(s.station_name)}</td>
     <td>${esc(s.staff_name || "—")}</td>
+    <!-- Which pump. Without it a variance names a person but not a meter, and
+         a meter is the thing that can actually be wrong. -->
+    <td>${esc(s.nozzle_label || "—")}</td>
     <td class="mono">${fmt.int(s.opening_meter)} → ${s.closing_meter == null ? "—" : fmt.int(s.closing_meter)}</td>
     <td class="mono">${s.metered_liters == null ? "—" : fmt.int(s.metered_liters)}</td>
     <td class="mono">${fmt.int(s.sold_liters)}</td>
@@ -868,7 +872,7 @@ async function loadAttendance(p) {
 }
 
 /* ---------- reports ---------- */
-let repRows = [];
+let repRows = [], repPivot = [], repFuels = [];
 
 const ymd = d =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -924,14 +928,42 @@ function renderReport() {
     `<div class="scard"><div class="lbl">${l}</div>
       <div class="val ${c}">${v}</div><div class="unit">${u}</div></div>`).join("");
 
-  $("repBody").innerHTML = repRows.length ? repRows.map(r => `<tr>
+  /* One row per day per branch, with a column per fuel, instead of one row
+     per fuel. Comparing diesel against petrol used to mean reading two rows
+     that were not next to each other - on a phone, often not even on the
+     same screen. The fuels come from the data, so a branch that starts
+     selling a third one gets a third column without a code change. */
+  const fuels = [...new Set(repRows.map(r => r.fuel_type).filter(Boolean))].sort();
+  const key = r => r.day + "\u0000" + (r.station_name || "");
+  const byDay = new Map();
+  for (const r of repRows) {
+    const k = key(r);
+    const row = byDay.get(k) || { day: r.day, station: r.station_name, fuels: {}, n: 0, etb: 0 };
+    const f = row.fuels[r.fuel_type] || { l: 0, etb: 0 };
+    f.l += Number(r.liters || 0);
+    f.etb += Number(r.sales_etb || 0);
+    row.fuels[r.fuel_type] = f;
+    row.n += Number(r.sale_count || 0);
+    row.etb += Number(r.sales_etb || 0);
+    byDay.set(k, row);
+  }
+  repPivot = [...byDay.values()].sort((a, b) =>
+    a.day === b.day ? String(a.station).localeCompare(String(b.station)) : (a.day < b.day ? 1 : -1));
+  repFuels = fuels;
+
+  $("repHead").innerHTML =
+    `<tr><th>Day</th><th>Site</th>` +
+    fuels.map(f => `<th class="mono">${esc(f)} L</th>`).join("") +
+    `<th class="mono">Sales</th><th class="mono">Total ETB</th></tr>`;
+
+  const cols = fuels.length + 4;
+  $("repBody").innerHTML = repPivot.length ? repPivot.map(r => `<tr>
     <td class="mono">${esc(r.day)}</td>
-    <td>${esc(r.station_name)}</td>
-    <td>${esc(r.fuel_type)}</td>
-    <td class="mono">${fmt.int(r.sale_count)}</td>
-    <td class="mono">${fmt.int(r.liters)}</td>
-    <td class="mono">${fmt.money(r.sales_etb)}</td></tr>`).join("")
-    : '<tr><td colspan="6" class="empty">No sales in this range</td></tr>';
+    <td>${esc(r.station)}</td>
+    ${fuels.map(f => `<td class="mono">${r.fuels[f] ? fmt.int(r.fuels[f].l) : "—"}</td>`).join("")}
+    <td class="mono">${fmt.int(r.n)}</td>
+    <td class="mono">${fmt.money(r.etb)}</td></tr>`).join("")
+    : `<tr><td colspan="${cols}" class="empty">No sales in this range</td></tr>`;
 
   $("repCsv").disabled = repRows.length === 0;
 }
@@ -1011,14 +1043,19 @@ function downloadCsv(filename, rows) {
 }
 
 function exportReport() {
-  if (!repRows.length) return;
-  const rows = [["Day", "Site", "Fuel", "Sales", "Litres", "ETB"]];
-  let n = 0, l = 0, etb = 0;
-  repRows.forEach(r => {
-    rows.push([r.day, r.station_name, r.fuel_type, r.sale_count, r.liters, r.sales_etb]);
-    n += Number(r.sale_count || 0); l += Number(r.liters || 0); etb += Number(r.sales_etb || 0);
+  if (!repPivot.length) return;
+  /* Same shape as the table on screen. A CSV laid out differently from what
+     was checked is a CSV nobody trusts. */
+  const rows = [["Day", "Site", ...repFuels.map(f => f + " L"), "Sales", "Total ETB"]];
+  const tot = {}; let n = 0, etb = 0;
+  repPivot.forEach(r => {
+    rows.push([r.day, r.station,
+               ...repFuels.map(f => (r.fuels[f] ? r.fuels[f].l : 0)),
+               r.n, r.etb]);
+    repFuels.forEach(f => { tot[f] = (tot[f] || 0) + (r.fuels[f] ? r.fuels[f].l : 0); });
+    n += r.n; etb += r.etb;
   });
-  rows.push([], ["Total", "", "", n, l, etb.toFixed(2)]);
+  rows.push([], ["Total", "", ...repFuels.map(f => tot[f] || 0), n, etb.toFixed(2)]);
 
   const where = selected === "all"
     ? "all-sites"
