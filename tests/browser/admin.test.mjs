@@ -28,7 +28,7 @@ const SHIFTS = [
     nozzle_label: "N1", opened_at: iso(30), closed_at: iso(22), opening_meter: 1000, closing_meter: 1250,
     metered_liters: 250, sold_liters: 240, variance_liters: 10 },        // +10, red
   { id: "sh2", station_id: "s-adama", station_name: "Adama", staff_name: "Sara O'Brien",
-    nozzle_label: "N2", opened_at: iso(20), closed_at: iso(12), opening_meter: 1250, closing_meter: 1400,
+    nozzle_label: "N2", opened_at: iso(20), closed_at: iso(12), opening_meter: 1250, closing_meter: 1400, closed_by_other: true,
     metered_liters: 150, sold_liters: 152, variance_liters: -2 },        // -2, green
   { id: "sh3", station_id: "s-adama", station_name: "Adama", staff_name: "Hana Tesfaye",
     nozzle_label: "N1", opened_at: iso(2), closed_at: null, opening_meter: 1400, closing_meter: null,
@@ -94,6 +94,7 @@ const DATA = {
   ],
   admin_set_staff_status: { success: true, message: "staff approved" },
   admin_set_price: { success: true, message: "price updated" },
+  close_shift: { success: true, message: "shift closed for them" },
   admin_resolve_correction: { success: true, message: "sale corrected" },
   admin_backup: {
     magpms_backup_version: 1, generated_at: "2026-07-31T21:00:00Z", timezone: "Africa/Addis_Ababa",
@@ -183,6 +184,15 @@ await page.click('.mi[data-s="shifts"]');
 await page.waitForFunction(() => document.querySelectorAll("#shiftBody tr").length === 4, null, { timeout: 5000 });
 ok("four shift rows", (await page.locator("#shiftBody tr").count()) === 4);
 
+/* A cashier who goes home without closing leaves a pump with no way out:
+   only they could close it, so the variance was lost until the next day
+   marked the shift abandoned. The manager can now take the reading. */
+/* One button, not two: the abandoned shift has no closing meter to take, so
+   close_shift would refuse it and a button that always fails is worse than
+   none. */
+ok("only a live open shift offers a Close",
+   (await page.locator('[data-act="admin-close-shift"]').count()) === 1);
+
 const variances = await page.locator("#shiftBody td.delta").allTextContents();
 ok("positive variance is signed", variances[0].trim() === "+10.00", `got ${JSON.stringify(variances[0])}`);
 ok("negative variance keeps its sign", variances[1].trim() === "-2.00", `got ${JSON.stringify(variances[1])}`);
@@ -197,7 +207,8 @@ const tags = await page.locator("#shiftBody .tag").allTextContents();
 /* A shift left open overnight reads as "abandoned", not as "open" alongside
    somebody genuinely at the pump right now. The two mean opposite things:
    one needs no action, the other needs asking about. */
-ok("shift status tags", tags.join(",") === "closed,closed,open,abandoned", tags.join(","));
+ok("shift status tags",
+   tags.join(",") === "closed,closed,closed by manager,open,abandoned", tags.join(","));
 
 const apos = await page.locator("#shiftBody tr:nth-child(2) td:nth-child(3)").textContent();
 ok("apostrophe in a name survives", apos.includes("O'Brien"), apos);
@@ -206,6 +217,27 @@ ok("apostrophe in a name survives", apos.includes("O'Brien"), apos);
    Without the nozzle the column cannot point at a pump. */
 const nozCol = await page.locator("#shiftBody tr:nth-child(1) td:nth-child(4)").textContent();
 ok("the shift says which nozzle", nozCol.trim() === "N1", nozCol);
+
+{ /* Closing asks for the reading rather than assuming one, and says whose
+     pump it is - a manager standing at pump 3 should not have to guess
+     which row they are about to close. */
+  await page.click('[data-act="admin-close-shift"]');
+  await page.waitForSelector("#uiModal.open", { timeout: 5000 });
+  const dlg = await page.locator("#uiModal").textContent();
+  ok("it names the pump", /N1/.test(dlg), dlg);
+  ok("and who left it open", /Hana Tesfaye/.test(dlg), dlg);
+  ok("and the opening reading", /1400/.test(dlg), dlg);
+  await page.fill("#umInput", "1500");
+  await page.click("#umOk");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("close_shift"), null, { timeout: 5000 });
+  ok("the close is sent", true);
+}
+
+/* A variance from a meter the operator never read is worth less than one
+   they did, so the row says which. */
+ok("a manager-closed shift is labelled",
+   (await page.locator("#shiftBody").textContent()).includes("closed by manager"));
 
 ok("attendance rows", (await page.locator("#attBody tr").count()) === 3);
 const attTags = await page.locator("#attBody .tag").allTextContents();

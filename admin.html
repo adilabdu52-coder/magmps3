@@ -157,8 +157,9 @@
         <table>
           <thead><tr><th>Opened</th><th>Site</th><th>Staff</th><th>Nozzle</th>
             <th class="mono">Meter</th><th class="mono">Metered L</th>
-            <th class="mono">Sold L</th><th class="mono">Variance</th><th>Status</th></tr></thead>
-          <tbody id="shiftBody"><tr><td colspan="9" class="empty">Loading...</td></tr></tbody>
+            <th class="mono">Sold L</th><th class="mono">Variance</th><th>Status</th>
+            <th></th></tr></thead>
+          <tbody id="shiftBody"><tr><td colspan="10" class="empty">Loading...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -824,8 +825,8 @@ async function loadShifts(p) {
   try {
     const rows = await rpc("list_shifts", p) || [];
     $("shiftBody").innerHTML = rows.length ? rows.map(shiftRow).join("")
-      : `<tr><td colspan="9" class="empty">No shifts opened in the last ${Number(shiftDays)} days</td></tr>`;
-  } catch (e) { failRows("shiftBody", 9, "shifts"); loadFailed("loadShifts", e); }
+      : `<tr><td colspan="10" class="empty">No shifts opened in the last ${Number(shiftDays)} days</td></tr>`;
+  } catch (e) { failRows("shiftBody", 10, "shifts"); loadFailed("loadShifts", e); }
 }
 
 /* Variance is metered minus sold. Positive means fuel left the pump that was
@@ -847,7 +848,18 @@ function shiftRow(s) {
     <td class="mono">${fmt.int(s.sold_liters)}</td>
     <td class="delta ${cls}">${v == null ? "—" : (v > 0 ? "+" : "") + v.toFixed(2)}</td>
     <td><span class="tag ${s.abandoned ? "rejected" : open ? "open" : "closed"}"
-        >${s.abandoned ? "abandoned" : open ? "open" : "closed"}</span></td></tr>`;
+        >${s.abandoned ? "abandoned" : open ? "open" : "closed"}</span>
+      ${s.closed_by_other ? '<span class="tag pending">closed by manager</span>' : ""}</td>
+    <!-- A cashier who goes home without closing leaves a pump with no way
+         out: only they could close it, so the variance was lost until the
+         next day marked it abandoned. The manager can take the reading. -->
+    <!-- Not on an abandoned shift: no closing meter was ever read, so
+         close_shift refuses it, and a button that always fails is worse than
+         no button. -->
+    <td>${open && !s.abandoned ? `<button class="btn btn-out" data-act="admin-close-shift"
+             data-id="${esc(s.id)}" data-nozzle="${esc(s.nozzle_label || "")}"
+             data-staff="${esc(s.staff_name || "")}"
+             data-open="${esc(s.opening_meter)}">Close</button>` : ""}</td></tr>`;
 }
 
 async function loadAttendance(p) {
@@ -1360,6 +1372,19 @@ function bindRowActions() {
           const r = await rpc("admin_credit_payment", { p_customer_id: id, p_amount: amt });
           toast(r.message || "Recorded", r.success ? "ok" : "err");
           if (r.success) { loadCustomers(); loadDashboard(); }
+          break;
+        }
+        case "admin-close-shift": {
+          const noz = el.getAttribute("data-nozzle");
+          const who = el.getAttribute("data-staff");
+          const from = el.getAttribute("data-open");
+          const meter = await promptNumber(`Close ${noz}`,
+            `${who} opened this pump at ${from} L and has not closed it. ` +
+            `Enter the reading on the pump now.`, "Closing meter (L)");
+          if (meter === null) return;
+          const r = await rpc("close_shift", { p_shift_id: id, p_closing_meter: meter });
+          toast(r.message || "Closed", r.success ? "ok" : "err");
+          if (r.success) { loadShiftsAndAttendance(); loadDashboard(); }
           break;
         }
         case "corr-fix": {
