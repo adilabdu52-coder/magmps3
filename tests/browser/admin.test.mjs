@@ -98,10 +98,32 @@ const DATA = {
   admin_add_note: { success: true, message: "note saved", id: "nt9" },
   admin_set_note: { success: true, message: "note updated" },
   admin_delete_note: { success: true, message: "note deleted" },
+  list_nozzles: [
+    { id: "nz1", station_id: "s-adama", station_name: "Adama", label: "Pump 1",
+      fuel_type: "Diesel", active: true, open_shift_id: null, open_by: null },
+    { id: "nz2", station_id: "s-adama", station_name: "Adama", label: "Pump 2",
+      fuel_type: "Benzil", active: true, open_shift_id: null, open_by: null }
+  ],
   admin_list_notes: [
     { id: "nt1", station_id: "s-adama", station_name: "Adama",
       body: "Pumps 1 and 2 are Benzil, the rest Diesel", pinned: true,
       author: "Owner", created_at: iso(48), updated_at: null },
+    // A shift written down by hand. The fuels add to 180 and the meter moved
+    // 180, so they agree and no warning should show.
+    { id: "nt3", station_id: "s-adama", station_name: "Adama",
+      body: "Morning shift", pinned: false, author: "Owner",
+      created_at: iso(6), updated_at: null,
+      staff_name: "Abebe Kebede", nozzle_label: "Pump 1",
+      start_meter: 1000, end_meter: 1180, metered_liters: 180,
+      fuel_liters: { Diesel: 120, Benzil: 60 }, noted_liters: 180 },
+    // These do not agree - 150 written, 180 metered - and saying so is the
+    // whole reason for writing both down.
+    { id: "nt4", station_id: "s-adama", station_name: "Adama",
+      body: "Evening shift", pinned: false, author: "Owner",
+      created_at: iso(3), updated_at: null,
+      staff_name: "Sara O'Brien", nozzle_label: "Pump 2",
+      start_meter: 2000, end_meter: 2180, metered_liters: 180,
+      fuel_liters: { Diesel: 150 }, noted_liters: 150 },
     // No branch: applies everywhere, so it must not have to be written five times.
     { id: "nt2", station_id: null, station_name: "All branches",
       body: "Shift starts 6am and ends 6pm", pinned: false,
@@ -625,6 +647,63 @@ console.log("\n[12] private notes");
   await page.click("#umCancel");
   ok("cancelling deletes nothing",
      !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_delete_note"));
+}
+
+console.log("\n[13] a note that records a shift");
+
+/* Typed as a sentence a shift is a paragraph nobody can add up. As fields it
+   is a record you can total and compare against what the tills say. */
+{
+  const shown = await page.locator("#noteList").textContent();
+  ok("the person is shown", /Abebe Kebede/.test(shown), shown);
+  ok("so is the pump", /Pump 1/.test(shown), shown);
+  ok("and the meter movement", /1,000 → 1,180/.test(shown) && /180 L/.test(shown), shown);
+  ok("and each fuel", /Diesel 120 L/.test(shown) && /Benzil 60 L/.test(shown), shown);
+
+  /* Two numbers that should agree, said plainly when they do not. */
+  ok("a mismatch between fuels and meter is called out",
+     /disagree by 30 L/.test(shown), shown);
+  ok("and a matching one is not",
+     (shown.match(/disagree by/g) || []).length === 1, shown);
+
+  /* One box per fuel the branch sells, built from the database - not two
+     boxes labelled diesel and petrol. */
+  const fuelBoxes = await page.locator("#noteFuels input[data-note-fuel]").evaluateAll(
+    els => els.map(e => e.getAttribute("data-note-fuel")).sort());
+  ok("a litres box per fuel the branch sells",
+     JSON.stringify(fuelBoxes) === JSON.stringify(["Benzil", "Diesel"]), JSON.stringify(fuelBoxes));
+
+  const staffOpts = await page.locator("#noteStaff").textContent();
+  ok("the staff list offers that branch's cashiers", /O'Brien/.test(staffOpts), staffOpts);
+  /* Not the admin - they do not work a pump - and not somebody with no branch,
+     who cannot have worked a shift at this one. */
+  ok("and not the admin", !/Owner/.test(staffOpts), staffOpts);
+  ok("nor anyone without a branch", !/Abebe/.test(staffOpts), staffOpts);
+  ok("the pump list is the branch's",
+     (await page.locator("#noteNozzle").textContent()).includes("Pump 1"));
+
+  /* The running total, while it can still be corrected. */
+  await page.fill("#noteStart", "5000");
+  await page.fill("#noteEnd", "5100");
+  await page.fill('#noteFuels input[data-note-fuel="Diesel"]', "80");
+  await page.waitForFunction(() =>
+    document.querySelector("#noteSum").textContent.includes("meter moved"), null, { timeout: 5000 });
+  const sum = await page.locator("#noteSum").textContent();
+  ok("the fuels are totalled as you type", /add up to 80 L/.test(sum), sum);
+  ok("against what the meter moved", /meter moved 100 L/.test(sum), sum);
+  ok("and the gap is named", /20 L less written than metered/.test(sum), sum);
+
+  await page.fill('#noteFuels input[data-note-fuel="Diesel"]', "100");
+  await page.waitForFunction(() =>
+    document.querySelector("#noteSum").textContent.includes("agree"), null, { timeout: 5000 });
+  ok("and says so when they agree",
+     /they agree/.test(await page.locator("#noteSum").textContent()));
+
+  // Figures with no sentence are a record, and must save.
+  await page.click("#noteBtn");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("admin_add_note"), null, { timeout: 5000 });
+  ok("a figures-only note saves", true);
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
