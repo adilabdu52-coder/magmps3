@@ -1,4 +1,4 @@
--- MAGPMS install 16 of 29 - run IN ORDER, one at a time.
+-- MAGPMS install 16 of 31 - run IN ORDER, one at a time.
 -- Project: fendopitdcyoefpxuevd
 -- No begin/commit: a transaction split across files rolls back.
 set search_path = public, extensions;

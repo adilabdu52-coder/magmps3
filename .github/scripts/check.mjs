@@ -128,6 +128,54 @@ for (const f of HTML) {
       fail(f, `line ${n}: "${fuel}" hard-coded in ${where} - build it from get_prices instead\n      ${line}`);
 }
 
+/* ---------------------------------------------------------------
+ * [6] install parts stay pasteable, and whole
+ * ---------------------------------------------------------------
+ * These are run by copying them into the Supabase SQL editor on a phone. A
+ * part of 206 lines was silently truncated mid-function on paste, and the
+ * database answered "unterminated dollar-quoted string" - which reads as a
+ * broken file rather than a short paste.
+ *
+ * An odd number of $$ markers means a function body was cut in half, which is
+ * the shape that failure takes and the one worth refusing outright.
+ */
+const PARTS_DIR = join(ROOT, "supabase", "install_parts");
+/* 180, from evidence rather than taste: parts of 164 and 167 lines pasted
+   whole on the phone this is actually run from, and one of 206 was truncated
+   mid-function. The limit sits above what is known to work and below what is
+   known to fail. Move it if the evidence moves. */
+const MAX_LINES = 180;
+
+if (existsSync(PARTS_DIR)) {
+  console.log("\n[6] install parts are pasteable on a phone");
+  const parts = readdirSync(PARTS_DIR).filter(f => f.endsWith(".sql")).sort();
+  let partsBad = 0;
+
+  for (const f of parts) {
+    const src = readFileSync(join(PARTS_DIR, f), "utf8");
+    const lines = src.split("\n").length;
+    const markers = (src.match(/\$\$/g) || []).length;
+
+    if (lines > MAX_LINES) {
+      fail(`install_parts/${f}`,
+        `${lines} lines - over ${MAX_LINES}, split it before a phone truncates the paste`);
+      partsBad++;
+    }
+    if (markers % 2 !== 0) {
+      fail(`install_parts/${f}`,
+        `${markers} dollar-quote markers - a function body is cut in half`);
+      partsBad++;
+    }
+    /* A transaction split across files rolls back silently when the editor
+       disconnects. Every part is standalone for that reason. */
+    if (/^\s*begin;\s*$/m.test(src) || /^\s*commit;\s*$/m.test(src)) {
+      fail(`install_parts/${f}`, "carries begin/commit - a transaction must not span parts");
+      partsBad++;
+    }
+  }
+  if (partsBad === 0) pass(`${parts.length} parts, all under ${MAX_LINES} lines and balanced`);
+}
+
 console.log(
   failures === 0
     ? "\nAll checks passed."
