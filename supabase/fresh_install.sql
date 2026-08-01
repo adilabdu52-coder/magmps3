@@ -2675,6 +2675,24 @@ $$;
 -- test is written out rather than folded into a coalesce, because
 -- `station_id = coalesce(null, station_id)` is false when station_id is null -
 -- which is exactly how those rows disappeared.
+--
+-- These two must be DROPPED first, not replaced. Both gain an `abandoned`
+-- column, and Postgres refuses to change a function's return type in place:
+--
+--   ERROR: cannot change return type of existing function
+--   HINT:  Use DROP FUNCTION list_shifts(uuid,integer,integer) first.
+--
+-- On a database that has never had 0007 this is a no-op, which is why running
+-- against a fresh schema did not catch it. The upgrade path is the one that
+-- matters, and it is the one everybody actually runs.
+--
+-- Dropping loses the grants that 0005 issued with `grant execute on all
+-- functions`, so they are re-issued at the end of this file. A silent loss of
+-- execute permission would show up as "permission denied for function" on
+-- the shifts page and nowhere else.
+drop function if exists list_shifts(uuid, int, int);
+drop function if exists list_attendance(uuid, int, int);
+
 create or replace function list_shifts(
   p_station_id uuid default null, p_days int default 7, p_limit int default 200)
 returns table (
@@ -2737,6 +2755,17 @@ as $$
    order by a.check_in desc
    limit greatest(1, least(p_limit, 500));
 $$;
+
+-- Re-issued because the two functions above were dropped and recreated, which
+-- takes their permissions with them.
+grant execute on function list_shifts(uuid, int, int)     to authenticated;
+grant execute on function list_attendance(uuid, int, int) to authenticated;
+grant execute on function check_in()                      to authenticated;
+grant execute on function check_out()                     to authenticated;
+grant execute on function open_shift(numeric)             to authenticated;
+grant execute on function close_shift(numeric)            to authenticated;
+grant execute on function my_open_shift()                 to authenticated;
+grant execute on function my_attendance_status()          to authenticated;
 
 commit;
 
