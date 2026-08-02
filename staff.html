@@ -68,6 +68,11 @@
          so it gets a card of its own rather than hiding inside the total. -->
     <div class="scard"><div class="em">📕</div><div class="lbl">On Credit</div>
       <div class="val v-green" id="myCredit">0</div><div class="unit">ETB today</div></div>
+    <!-- How much fuel is actually behind them. A cashier is asked "have you
+         got diesel?" all day and should not have to open another tab to
+         answer it. -->
+    <div class="scard"><div class="em">🛢</div><div class="lbl">Fuel Stock</div>
+      <div class="val v-blue" id="myStock">0</div><div class="unit" id="myStockSub">litres at this branch</div></div>
   </div>
 
   <div class="refresh-line"><span id="updStamp">—</span><button id="refreshBtn">↻ Refresh now</button></div>
@@ -438,6 +443,8 @@ async function loadTanks() {
       el.textContent = staff && !staff.station_id
         ? "No branch assigned yet - ask the manager"
         : "No tanks configured for this branch";
+      $("myStock").textContent = "0";
+      $("myStockSub").textContent = "no tanks";
       return;
     }
     el.className = "";
@@ -447,6 +454,13 @@ async function loadTanks() {
        Under 30% only, and the card hides itself entirely when there is
        nothing to say - a permanent empty panel is noise, and noise is what
        gets ignored on the day it finally matters. */
+    /* The headline number on My Day. Summed across the branch's tanks, with
+       the count so "40,000 L" is read as what it is rather than one tank. */
+    const total = rows.reduce((a, t) => a + Number(t.current_liters || 0), 0);
+    $("myStock").textContent = fmt.int(total);
+    $("myStockSub").textContent =
+      `litres across ${rows.length} tank${rows.length === 1 ? "" : "s"}`;
+
     const low = rows.filter(t => tankPct(t) < 30).sort((a, b) => tankPct(a) - tankPct(b));
     $("lowTankCard").classList.toggle("hidden", low.length === 0);
     if (low.length) $("lowTankList").innerHTML = low.map(tankRow).join("");
