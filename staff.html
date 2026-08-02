@@ -475,7 +475,12 @@ let myShifts = [];
 
 async function checkShift() {
   try {
-    myShifts = await rpc("my_open_shifts") || [];
+    /* A shift with no nozzle cannot be sold from: record_sale is handed a
+       nozzle and there would be none. One opened before pumps existed shows
+       up as an open shift with a blank name, and the cashier then reads
+       "open a shift first" on a screen that says one is open. 0020 clears
+       those; this makes sure a stray one can never reach the sale box. */
+    myShifts = (await rpc("my_open_shifts") || []).filter(sh => sh.nozzle_id);
     const any = myShifts.length > 0;
 
     [$("shiftBanner"), $("shiftBanner2"), $("dashShift")].forEach(b => {

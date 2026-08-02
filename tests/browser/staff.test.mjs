@@ -367,6 +367,35 @@ console.log("\n[7] a shift belongs to a nozzle");
   await ctx.close();
 }
 
+/* Found in the live data: a shift opened before pumps existed carries no
+   nozzle, and every route out of it now goes through one. It cannot be sold
+   from, because record_sale is handed a nozzle and there is none - so the
+   page must not count it as open, or the cashier reads "open a shift first"
+   while looking at a screen that says one is open. */
+{
+  const { page, ctx } = await open({
+    me: WITH_BRANCH,
+    data: {
+      list_nozzles: NOZZLES,
+      my_open_shifts: [{ id: "old", nozzle_id: null, nozzle_label: null, fuel_type: null,
+                         opened_at: "2026-07-31T22:10:58Z", opening_meter: 1000,
+                         sold_liters: 0 }],
+      my_sales_today: [], list_tanks: TANKS
+    }
+  });
+  await page.click('.mi[data-s="pos"]');
+  await page.waitForFunction(() =>
+    document.getElementById("saleBtn").disabled === true, null, { timeout: 5000 });
+  ok("a shift with no pump does not count as open",
+     await page.locator("#saleBtn").isDisabled());
+  ok("and the till says to open one rather than offering a dead option",
+     (await page.locator("#sNozzle").textContent()).includes("Open a shift first"),
+     await page.locator("#sNozzle").textContent());
+  const stale = await page.locator("#shiftBanner").textContent();
+  ok("the banner agrees with the till", /No open shift/.test(stale), stale);
+  await ctx.close();
+}
+
 ok("no uncaught page errors anywhere", errors.length === 0, errors.join("\n        "));
 
 await browser.close();
