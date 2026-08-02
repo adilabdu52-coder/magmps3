@@ -123,6 +123,8 @@ header .h-actions{display:flex;align-items:center;gap:8px;flex:none}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .scard .unit{color:var(--muted);font-size:12.5px;margin-top:6px}
 .v-gold{color:var(--accent)}.v-blue{color:var(--accent2)}.v-purple{color:var(--purple)}.v-green{color:var(--success)}
+/* For a count that is bad news when it is not zero - voided sales. */
+.v-red{color:var(--danger)}
 .scard.hl{border-color:var(--accent)}
 .badge-low{display:inline-block;margin-left:8px;padding:2px 9px;border-radius:99px;font-size:10px;
   font-weight:700;background:var(--danger-soft);color:var(--danger);vertical-align:middle;

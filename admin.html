@@ -36,6 +36,7 @@
   <div class="mi" data-s="expenses"><span class="ic">💸</span> Expenses</div>
   <div class="mi" data-s="corrections"><span class="ic">🛠</span> Corrections</div>
   <div class="mi" data-s="reports"><span class="ic">📈</span> Reports</div>
+  <div class="mi" data-s="research"><span class="ic">🔎</span> Research</div>
   <div class="mi" data-s="notes"><span class="ic">📝</span> Notes</div>
   <div class="mi" data-s="backup"><span class="ic">💾</span> Backup</div>
 </nav>
@@ -360,6 +361,100 @@
             <th class="mono">Voided</th><th class="mono">Days</th><th>Best day</th></tr></thead>
           <tbody id="stfBody"><tr><td colspan="10" class="empty">Choose a range above and run it</td></tr></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RESEARCH ===== -->
+  <!-- Reports answers two fixed questions. Research is for the ones not asked
+       yet: group the trade by week or month instead of only by day, and then
+       read the actual sales underneath any figure that looks wrong. A total
+       nobody can drill into is a number you either believe or you do not. -->
+  <div class="section" id="sec-research">
+    <h1 class="display">Research</h1>
+    <div class="sub" id="rsSub">—</div>
+
+    <div class="card">
+      <h2>Range</h2>
+      <p class="card-note">Both cards below use these dates, so the shape and the rows underneath
+        it are always over the same period. Days end at midnight Ethiopian time, as everywhere else.</p>
+
+      <div class="tabs" id="rsQuick">
+        <button class="tab" data-range="7">Last 7 days</button>
+        <button class="tab active" data-range="30">Last 30 days</button>
+        <button class="tab" data-range="90">Last 90 days</button>
+        <button class="tab" data-range="month">This month</button>
+      </div>
+      <div class="grid2">
+        <div class="field"><label for="rsFrom">From</label><input type="date" id="rsFrom"/></div>
+        <div class="field"><label for="rsTo">To</label><input type="date" id="rsTo"/></div>
+      </div>
+      <div class="field">
+        <label for="rsBucket">Group by</label>
+        <select id="rsBucket">
+          <option value="day">Day</option>
+          <option value="week">Week</option>
+          <option value="month" selected>Month</option>
+        </select>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-gold" id="rsBtn">🔎 Run research</button>
+      </div>
+      <div class="msg" id="rsMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>The shape</h2>
+      <p class="card-note">One row per period per branch, with a column per fuel. Voided sales are
+        out of the money and counted on their own — a void is a correction, not a negative sale,
+        but a branch voiding a lot of them is worth knowing about.</p>
+
+      <div class="stats" id="rsStats"></div>
+      <div class="report-actions">
+        <button class="btn btn-blue" id="rsTotalsCsv" disabled>⬇ Download CSV</button>
+      </div>
+
+      <div class="divider"></div>
+      <div class="table-scroll">
+        <table>
+          <thead id="rsHead"><tr><th>Period</th><th>Site</th>
+            <th class="mono">Sales</th><th class="mono">Total ETB</th></tr></thead>
+          <tbody id="rsBody"><tr><td colspan="6" class="empty">Choose a range and run it</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>The rows underneath</h2>
+      <p class="card-note">Every sale a cashier entered over the range, as entered — including the
+        voided ones, marked. The price shown is what it actually went out at, worked back from what
+        was taken, not today's price.</p>
+
+      <div class="grid2">
+        <div class="field">
+          <label for="rsFuel">Fuel</label>
+          <select id="rsFuel"><option value="">Every fuel</option></select>
+        </div>
+        <div class="field">
+          <label for="rsWho">Person</label>
+          <select id="rsWho"><option value="">Everyone</option></select>
+        </div>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-blue" id="rsRowsCsv" disabled>⬇ Download CSV</button>
+      </div>
+      <div class="field-hint" id="rsCount">—</div>
+
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Time</th><th>Site</th><th>Person</th><th>Pump</th><th>Fuel</th>
+            <th class="mono">Litres</th><th class="mono">ETB/L</th><th class="mono">ETB</th>
+            <th>Pay</th></tr></thead>
+          <tbody id="rsRows"><tr><td colspan="9" class="empty">Run it above</td></tr></tbody>
+        </table>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-out" id="rsMore" disabled>Load more</button>
       </div>
     </div>
   </div>
@@ -1350,6 +1445,241 @@ function exportStaffReport() {
   toast("Staff report downloaded", "ok");
 }
 
+/* ---------- research ---------- */
+/* Two queries that belong together. research_totals gives the shape of the
+   trade over a period; research_sales gives the sales that make it up. Being
+   able to go from "Hirna, week of the 27th, Diesel, 4,100 L" to the forty
+   sales behind it is the difference between a report and something you can
+   research with. */
+let rsTotals = [], rsPivot = [], rsFuelCols = [], rsRowData = [], rsTotalRows = 0;
+
+const RS_PAGE = 500;
+
+function rsRange() {
+  const from = $("rsFrom").value, to = $("rsTo").value;
+  if (!from || !to) { msg("rsMsg", "Choose both dates", "error"); return null; }
+  if (from > to) { msg("rsMsg", "The From date is after the To date", "error"); return null; }
+  return { from, to };
+}
+
+function setRsRange(kind) {
+  const now = new Date();
+  let from = new Date(now);
+  if (kind === "month") from = new Date(now.getFullYear(), now.getMonth(), 1);
+  else from.setDate(now.getDate() - (Number(kind) - 1));
+  $("rsFrom").value = ymd(from);
+  $("rsTo").value = ymd(now);
+}
+
+async function runResearch() {
+  const r = rsRange();
+  if (!r) return;
+
+  const btn = $("rsBtn"); btn.disabled = true;
+  msg("rsMsg", "", "");
+  try {
+    rsTotals = await rpc("research_totals", {
+      p_station_id: stationParam(), p_from: r.from, p_to: r.to,
+      p_bucket: $("rsBucket").value
+    }) || [];
+    renderResearchTotals();
+
+    /* The fuel picker is filled from what was actually sold in this range,
+       not from a list written into the page. A branch that starts selling a
+       third fuel gets a third option with no code change - and a fuel nobody
+       sold is not offered as a filter that would return nothing. */
+    fillRsFuels();
+
+    await loadResearchRows(true);
+    msg("rsMsg", rsTotals.length ? "" : "No sales in this range",
+        rsTotals.length ? "" : "error");
+  } catch (e) {
+    rsTotals = []; rsPivot = []; rsRowData = [];
+    $("rsTotalsCsv").disabled = true;
+    $("rsRowsCsv").disabled = true;
+    $("rsStats").innerHTML = "";
+    failRows("rsBody", 6, "the research");
+    failRows("rsRows", 9, "the sales");
+    msg("rsMsg", "Could not run it", "error");
+    loadFailed("runResearch", e);
+  } finally { btn.disabled = false; }
+}
+
+function fillRsFuels() {
+  const sel = $("rsFuel"), keep = sel.value;
+  const fuels = [...new Set(rsTotals.map(t => t.fuel_type).filter(Boolean))].sort();
+  sel.innerHTML = '<option value="">Every fuel</option>' +
+    fuels.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join("");
+  if (fuels.includes(keep)) sel.value = keep;
+}
+
+function fillRsStaff() {
+  const sel = $("rsWho"), keep = sel.value;
+  /* Everyone who could have sold, not only whoever appears on the current
+     page of rows - filtering by a person is how you find out they have NO
+     sales, and a picker built from the rows could never offer them. */
+  const people = allStaff
+    .filter(s => s.status === "approved")
+    .sort((a, b) => String(a.full_name).localeCompare(String(b.full_name)));
+  sel.innerHTML = '<option value="">Everyone</option>' +
+    people.map(s => `<option value="${esc(s.id)}">${esc(s.full_name)}${
+      s.station_name ? " · " + esc(s.station_name) : ""}</option>`).join("");
+  if (people.some(s => s.id === keep)) sel.value = keep;
+}
+
+function renderResearchTotals() {
+  const t = rsTotals.reduce((a, r) => ({
+    etb: a.etb + Number(r.sales_etb || 0),
+    l:   a.l   + Number(r.liters || 0),
+    n:   a.n   + Number(r.sale_count || 0),
+    cr:  a.cr  + Number(r.credit_etb || 0),
+    v:   a.v   + Number(r.voided_count || 0)
+  }), { etb: 0, l: 0, n: 0, cr: 0, v: 0 });
+
+  const periods = new Set(rsTotals.map(r => r.bucket_label)).size;
+  const per = $("rsBucket").value;
+  const word = periods === 1 ? per : per + "s";
+
+  $("rsStats").innerHTML = [
+    ["Total sales", fmt.int(t.etb), "ETB", "v-gold"],
+    ["Litres sold", fmt.int(t.l), "L", "v-blue"],
+    ["Transactions", fmt.int(t.n), periods ? `over ${periods} ${word}` : "—", "v-purple"],
+    /* Credit is the money that has not arrived yet. Buried in the total it
+       looks like takings; on its own it is a debt somebody has to chase. */
+    ["On credit", fmt.int(t.cr), "ETB not yet paid", "v-green"],
+    ["Voided", fmt.int(t.v), t.v ? "left out of the money" : "none", "v-red"]
+  ].map(([l, v, u, c]) =>
+    `<div class="scard"><div class="lbl">${l}</div>
+      <div class="val ${c}">${v}</div><div class="unit">${u}</div></div>`).join("");
+
+  // One row per period per branch, a column per fuel - the same shape the
+  // sales report uses, so the two can be read against each other.
+  const fuels = [...new Set(rsTotals.map(r => r.fuel_type).filter(Boolean))].sort();
+  const byKey = new Map();
+  for (const r of rsTotals) {
+    const k = r.bucket_label + " " + (r.station_name || "");
+    const row = byKey.get(k) ||
+      { start: r.bucket_start, label: r.bucket_label, station: r.station_name,
+        fuels: {}, n: 0, etb: 0 };
+    const f = row.fuels[r.fuel_type] || { l: 0, etb: 0 };
+    f.l += Number(r.liters || 0);
+    f.etb += Number(r.sales_etb || 0);
+    row.fuels[r.fuel_type] = f;
+    row.n += Number(r.sale_count || 0);
+    row.etb += Number(r.sales_etb || 0);
+    byKey.set(k, row);
+  }
+  rsPivot = [...byKey.values()].sort((a, b) =>
+    a.start === b.start ? String(a.station).localeCompare(String(b.station))
+                        : (a.start < b.start ? 1 : -1));
+  rsFuelCols = fuels;
+
+  $("rsHead").innerHTML =
+    `<tr><th>Period</th><th>Site</th>` +
+    fuels.map(f => `<th class="mono">${esc(f)} L</th>`).join("") +
+    `<th class="mono">Sales</th><th class="mono">Total ETB</th></tr>`;
+
+  const cols = fuels.length + 4;
+  $("rsBody").innerHTML = rsPivot.length ? rsPivot.map(r => `<tr>
+    <td class="mono">${esc(r.label)}</td>
+    <td>${esc(r.station)}</td>
+    ${fuels.map(f => `<td class="mono">${r.fuels[f] ? fmt.int(r.fuels[f].l) : "—"}</td>`).join("")}
+    <td class="mono">${fmt.int(r.n)}</td>
+    <td class="mono">${fmt.money(r.etb)}</td></tr>`).join("")
+    : `<tr><td colspan="${cols}" class="empty">No sales in this range</td></tr>`;
+
+  $("rsTotalsCsv").disabled = rsTotals.length === 0;
+}
+
+/* fresh: start again from the first page. Otherwise append the next one, so
+   "Load more" adds to what is on screen rather than replacing it. */
+async function loadResearchRows(fresh) {
+  const r = rsRange();
+  if (!r) return;
+  if (fresh) rsRowData = [];
+
+  const btn = $("rsMore"); btn.disabled = true;
+  try {
+    const page = await rpc("research_sales", {
+      p_station_id: stationParam(), p_from: r.from, p_to: r.to,
+      p_staff_id: $("rsWho").value || null,
+      p_fuel: $("rsFuel").value || null,
+      p_limit: RS_PAGE, p_offset: rsRowData.length
+    }) || [];
+
+    /* total_rows rides on every row and is the size of the whole match. With
+       no rows at all there is nothing to carry it, and that is genuinely
+       zero. */
+    rsTotalRows = page.length ? Number(page[0].total_rows || 0) : rsRowData.length;
+    rsRowData = rsRowData.concat(page);
+    renderResearchRows();
+  } catch (e) {
+    failRows("rsRows", 9, "the sales");
+    loadFailed("loadResearchRows", e);
+  }
+}
+
+function renderResearchRows() {
+  /* A voided sale is marked with the same red tag the rest of the app uses
+     for one, rather than being dropped. Research is for looking at what
+     happened, and what happened includes the mistakes. */
+  $("rsRows").innerHTML = rsRowData.length ? rsRowData.map(r => `<tr>
+    <td class="mono">${esc(fmt.date(r.sold_at))} ${esc(fmt.time(r.sold_at))}</td>
+    <td>${esc(r.station_name || "—")}</td>
+    <td>${esc(r.staff_name || "—")}</td>
+    <td>${esc(r.nozzle_label || "—")}</td>
+    <td>${esc(r.fuel_type || "—")}</td>
+    <td class="mono">${fmt.int(r.liters)}</td>
+    <td class="mono">${r.unit_price == null ? "—" : fmt.money(r.unit_price)}</td>
+    <td class="mono">${fmt.money(r.total_etb)}</td>
+    <td>${esc(r.payment_method || "—")}${
+      r.customer_name ? " · " + esc(r.customer_name) : ""}${
+      r.voided ? ' <span class="tag rejected">voided</span>' : ""}</td></tr>`).join("")
+    : '<tr><td colspan="9" class="empty">No sales match</td></tr>';
+
+  // "500 rows" when 500 were asked for reads as a total and is not one.
+  $("rsCount").textContent = rsTotalRows
+    ? `Showing ${fmt.int(rsRowData.length)} of ${fmt.int(rsTotalRows)} sales`
+    : "No sales match";
+  $("rsMore").disabled = rsRowData.length >= rsTotalRows;
+  $("rsRowsCsv").disabled = rsRowData.length === 0;
+}
+
+function exportResearchTotals() {
+  if (!rsPivot.length) return;
+  const rows = [["Period", "Site", ...rsFuelCols.map(f => f + " L"), "Sales", "Total ETB"]];
+  const tot = {}; let n = 0, etb = 0;
+  rsPivot.forEach(r => {
+    rows.push([r.label, r.station,
+               ...rsFuelCols.map(f => (r.fuels[f] ? r.fuels[f].l : 0)), r.n, r.etb]);
+    rsFuelCols.forEach(f => { tot[f] = (tot[f] || 0) + (r.fuels[f] ? r.fuels[f].l : 0); });
+    n += r.n; etb += r.etb;
+  });
+  rows.push([], ["Total", "", ...rsFuelCols.map(f => tot[f] || 0), n, etb.toFixed(2)]);
+  downloadCsv(`magpms-research-${rsWhere()}-${$("rsFrom").value}-to-${$("rsTo").value}.csv`, rows);
+  toast("Research downloaded", "ok");
+}
+
+function exportResearchRows() {
+  if (!rsRowData.length) return;
+  /* Voided is a column of its own rather than a word inside the payment
+     cell. In a spreadsheet somebody will sort or filter on it, and they
+     cannot do that to a suffix. */
+  const rows = [["Time", "Site", "Person", "Pump", "Fuel", "Litres", "ETB/L",
+                 "ETB", "Payment", "Customer", "Voided"]];
+  rsRowData.forEach(r => rows.push([
+    r.sold_at, r.station_name, r.staff_name, r.nozzle_label, r.fuel_type,
+    r.liters, r.unit_price, r.total_etb, r.payment_method, r.customer_name,
+    r.voided ? "yes" : "no"
+  ]));
+  downloadCsv(`magpms-sales-rows-${rsWhere()}-${$("rsFrom").value}-to-${$("rsTo").value}.csv`, rows);
+  toast(`${fmt.int(rsRowData.length)} sales downloaded`, "ok");
+}
+
+const rsWhere = () => selected === "all"
+  ? "all-sites"
+  : stationName(selected).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
 /* ---------- tanks & delivery ---------- */
 async function loadTanks() {
   const el = $("tankList");
@@ -1705,6 +2035,25 @@ const LOADERS = {
     $("stfCsv").disabled = true;
     $("stfBody").innerHTML = '<tr><td colspan="10" class="empty">Choose a range above and run it</td></tr>';
     msg("stfMsg", "", "");
+  },
+  /* Research is cleared on arrival for the same reason a report is: one
+     branch's figures sitting under another branch's heading is worse than an
+     empty table. The person picker is filled here rather than on each run,
+     and needs the staff list, which the Staff section may not have fetched
+     yet if this is the first place the manager opens. */
+  research: async () => {
+    rsTotals = []; rsPivot = []; rsRowData = []; rsTotalRows = 0;
+    $("rsTotalsCsv").disabled = true;
+    $("rsRowsCsv").disabled = true;
+    $("rsMore").disabled = true;
+    $("rsStats").innerHTML = "";
+    $("rsBody").innerHTML = '<tr><td colspan="6" class="empty">Choose a range and run it</td></tr>';
+    $("rsRows").innerHTML = '<tr><td colspan="9" class="empty">Run it above</td></tr>';
+    $("rsCount").textContent = "—";
+    msg("rsMsg", "", "");
+
+    if (!allStaff.length) await loadStaff();
+    fillRsStaff();
   }
 };
 
@@ -1738,7 +2087,7 @@ function applySelection() {
   $("dashSub").textContent = isAll ? "Every branch at a glance" : "Branch overview";
   $("allSitesCard").classList.toggle("hidden", !isAll);
   $("oneSiteCard").classList.toggle("hidden", isAll);
-  ["priceSub", "tankSub", "creditSub", "salesSub", "expSub", "shiftSub", "repSub"]
+  ["priceSub", "tankSub", "creditSub", "salesSub", "expSub", "shiftSub", "repSub", "rsSub"]
     .forEach(i => { $(i).textContent = where; });
 
   renderRail(); renderDashStats();
@@ -1764,6 +2113,15 @@ function bind() {
   $("repCsv").addEventListener("click", exportReport);
   $("stfBtn").addEventListener("click", runStaffReport);
   $("stfCsv").addEventListener("click", exportStaffReport);
+  $("rsBtn").addEventListener("click", runResearch);
+  $("rsTotalsCsv").addEventListener("click", exportResearchTotals);
+  $("rsRowsCsv").addEventListener("click", exportResearchRows);
+  $("rsMore").addEventListener("click", () => loadResearchRows(false));
+  /* Changing a filter re-queries rather than filtering what is on screen.
+     The rows are a page of the whole match, so filtering the page would
+     search only the first 500 sales and quietly call that the answer. */
+  ["rsFuel", "rsWho"].forEach(id =>
+    $(id).addEventListener("change", () => { if (rsTotals.length) loadResearchRows(true); }));
   $("bkBtn").addEventListener("click", downloadBackup);
   $("noteBtn").addEventListener("click", () => addNote(false));
   $("notePin").addEventListener("click", () => addNote(true));
@@ -1789,6 +2147,15 @@ function bind() {
   // Typing a date by hand means no preset is in force any more.
   ["repFrom", "repTo"].forEach(id => $(id).addEventListener("change", () =>
     $("repQuick").querySelectorAll(".tab").forEach(x => x.classList.remove("active"))));
+
+  $("rsQuick").addEventListener("click", e => {
+    const t = e.target.closest("[data-range]");
+    if (!t) return;
+    $("rsQuick").querySelectorAll(".tab").forEach(x => x.classList.toggle("active", x === t));
+    setRsRange(t.getAttribute("data-range"));
+  });
+  ["rsFrom", "rsTo"].forEach(id => $(id).addEventListener("change", () =>
+    $("rsQuick").querySelectorAll(".tab").forEach(x => x.classList.remove("active"))));
 
   /* ui.js decides which panel is visible; this decides what it holds. */
   document.addEventListener("click", e => {
@@ -1850,6 +2217,7 @@ function refreshAll() {
 
   bind();
   setRange("30");
+  setRsRange("30");
   await loadDashboard();
   applySelection();
   setInterval(loadDashboard, 60000);

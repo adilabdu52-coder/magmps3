@@ -147,6 +147,41 @@ const DATA = {
       sale_count: 3, liters: 60, sales_etb: 7200, cash_etb: 7200, credit_etb: 0,
       voided_count: 0, days_active: 2, best_day: "2026-07-28" }
   ],
+  /* Two months, two branches, two fuels: enough for the pivot to have
+     something to fold, and for a month label to be distinguishable from a
+     day. The evil branch name rides along to prove the CSV guard fires here
+     as it does on the other exports. */
+  research_totals: [
+    { bucket_start: "2026-07-01", bucket_label: "2026-07", station_id: "s-adama",
+      station_name: "Adama", fuel_type: "Diesel", sale_count: 40, liters: 1600,
+      sales_etb: 152000, credit_etb: 12000, voided_count: 2, voided_liters: 300 },
+    { bucket_start: "2026-07-01", bucket_label: "2026-07", station_id: "s-adama",
+      station_name: "Adama", fuel_type: "Benzil", sale_count: 10, liters: 200,
+      sales_etb: 18000, credit_etb: 0, voided_count: 0, voided_liters: 0 },
+    { bucket_start: "2026-06-01", bucket_label: "2026-06", station_id: "s-evil",
+      station_name: "=cmd|' /C calc'!A0", fuel_type: "Diesel", sale_count: 5,
+      liters: 100, sales_etb: 9500, credit_etb: 0, voided_count: 0, voided_liters: 0 }
+  ],
+  /* total_rows is 5 against a page of 3, which is the case that matters:
+     "3 rows" when 3 were asked for reads as a total and is not one.
+     unit_price is 90 while get_prices says Diesel is 95 today - the row must
+     show what the sale actually went out at, not today's price. */
+  research_sales: [
+    { id: "r1", sold_at: iso(1), station_name: "Adama", staff_name: "Abebe Kebede",
+      nozzle_label: "Pump 1", fuel_type: "Diesel", liters: 40, unit_price: 90,
+      total_etb: 3600, payment_method: "cash", customer_name: null,
+      voided: false, total_rows: 5 },
+    { id: "r2", sold_at: iso(2), station_name: "Adama", staff_name: "Sara O'Brien",
+      nozzle_label: "Pump 2", fuel_type: "Benzil", liters: 20, unit_price: 88,
+      total_etb: 1760, payment_method: "credit", customer_name: "Dashen Transport",
+      voided: false, total_rows: 5 },
+    // The mistake is in the rows, marked, where the totals left it out of
+    // the money. Research is for what happened, and that includes mistakes.
+    { id: "r3", sold_at: iso(3), station_name: "Adama", staff_name: "Abebe Kebede",
+      nozzle_label: "Pump 1", fuel_type: "Diesel", liters: 999, unit_price: 90,
+      total_etb: 89910, payment_method: "cash", customer_name: null,
+      voided: true, total_rows: 5 }
+  ],
   admin_list_corrections: [
     { id: "c1", sale_id: "x1", station_id: "s-adama", station_name: "Adama",
       staff_name: "Abebe Kebede", reported_at: iso(2), reason: "typed 1000 instead of 100",
@@ -704,6 +739,127 @@ console.log("\n[13] a note that records a shift");
   await page.waitForFunction(() =>
     JSON.stringify(window.__calls).includes("admin_add_note"), null, { timeout: 5000 });
   ok("a figures-only note saves", true);
+}
+
+console.log("\n[14] research: the shape, and the rows underneath it");
+
+/* Reports answers two fixed questions. Research is for the ones not asked
+   yet - group by week or month, then read the actual sales behind any figure
+   that looks wrong. A total nobody can drill into is a number you either
+   believe or you do not. */
+{
+  await page.click('.mi[data-s="research"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#rsBody").textContent.includes("Choose a range"), null, { timeout: 5000 });
+  ok("it starts empty rather than showing another branch's figures",
+     await page.locator("#rsTotalsCsv").isDisabled());
+
+  await page.selectOption("#rsBucket", "month");
+  await page.click("#rsBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#rsBody").textContent.includes("2026-07"), null, { timeout: 5000 });
+
+  /* One row per period per branch with a column per fuel - the same shape
+     the sales report uses, so the two can be read against each other. Two
+     Adama fuels in July must fold into ONE row, not two. */
+  ok("periods and branches are one row each",
+     (await page.locator("#rsBody tr").count()) === 2,
+     String(await page.locator("#rsBody tr").count()));
+  const shape = await page.locator("#rsBody").textContent();
+  ok("the month is the period, not the day", /2026-07/.test(shape) && !/2026-07-01/.test(shape), shape);
+  ok("each fuel gets its own column",
+     (await page.locator("#rsHead th").allTextContents()).join("|").includes("Diesel L"));
+  ok("and the litres land under it", /1,600/.test(shape) && /200/.test(shape), shape);
+
+  const stats = await page.locator("#rsStats").textContent();
+  ok("the takings are totalled", /179,500/.test(stats), stats);
+  /* Credit is money that has not arrived. Inside the total it looks like
+     takings; on its own it is a debt somebody has to chase. */
+  ok("credit is broken out", /12,000/.test(stats), stats);
+  /* A void is a correction, not a negative sale - but a branch voiding a lot
+     of them is worth knowing, and that is invisible if voids are dropped. */
+  ok("voids are counted without entering the money",
+     /Voided/.test(stats) && !/241,910/.test(stats), stats);
+
+  // The rows behind the figures, fetched with the same range.
+  await page.waitForFunction(() =>
+    document.querySelector("#rsRows").textContent.includes("Pump 1"), null, { timeout: 5000 });
+  const rows = await page.locator("#rsRows").textContent();
+  ok("the sales underneath are listed", (await page.locator("#rsRows tr").count()) === 3);
+  ok("the seller and the pump are named", /Abebe Kebede/.test(rows) && /Pump 2/.test(rows), rows);
+  ok("a credit sale names the customer", /Dashen Transport/.test(rows), rows);
+  /* get_prices says Diesel is 95 today. The row must show what the sale
+     actually went out at - re-pricing an old sale rewrites history. */
+  ok("the price is the one on the day, not today's",
+     /90\.00/.test(rows) && !/95\.00/.test(rows), rows);
+  ok("the voided sale is here, marked",
+     (await page.locator("#rsRows .tag.rejected").count()) === 1);
+
+  /* "3 rows" when 3 were asked for reads as a total and is not one. */
+  ok("the count says how many of how many",
+     /Showing 3 of 5/.test(await page.locator("#rsCount").textContent()),
+     await page.locator("#rsCount").textContent());
+  ok("and there is more to load", !(await page.locator("#rsMore").isDisabled()));
+
+  // Load more appends to what is on screen rather than replacing it.
+  await page.evaluate(() => {
+    window.__override = { research_sales: [
+      { id: "r4", sold_at: new Date().toISOString(), station_name: "Adama",
+        staff_name: "Hana Tesfaye", nozzle_label: "Pump 3", fuel_type: "Diesel",
+        liters: 10, unit_price: 90, total_etb: 900, payment_method: "telebirr",
+        customer_name: null, voided: false, total_rows: 5 },
+      { id: "r5", sold_at: new Date().toISOString(), station_name: "Adama",
+        staff_name: "Hana Tesfaye", nozzle_label: "Pump 3", fuel_type: "Diesel",
+        liters: 5, unit_price: 90, total_etb: 450, payment_method: "cash",
+        customer_name: null, voided: false, total_rows: 5 }
+    ] };
+  });
+  await page.click("#rsMore");
+  await page.waitForFunction(() =>
+    document.querySelector("#rsCount").textContent.includes("5 of 5"), null, { timeout: 5000 });
+  ok("load more adds to the list rather than replacing it",
+     (await page.locator("#rsRows tr").count()) === 5);
+  ok("and stops offering more once they are all here",
+     await page.locator("#rsMore").isDisabled());
+  await page.evaluate(() => { window.__override = {}; });
+
+  // Both downloads.
+  const dl1 = page.waitForEvent("download", { timeout: 8000 });
+  await page.click("#rsTotalsCsv");
+  const f1 = await dl1;
+  ok("the shape downloads", /magpms-research-.*-to-/.test(f1.suggestedFilename()),
+     f1.suggestedFilename());
+  const b1 = await readFile(await f1.path(), "utf8");
+  ok("with a period column", b1.includes('"Period","Site"'), b1.slice(0, 80));
+  ok("a column per fuel", b1.includes('"Diesel L"'), b1.slice(0, 120));
+  ok("and a total row", /\n"Total",/.test(b1), b1.slice(-140));
+  /* A branch named =cmd is a formula to Excel, not a branch. */
+  ok("a formula branch name is neutralised", b1.includes("'=cmd"), b1.slice(0, 400));
+
+  const dl2 = page.waitForEvent("download", { timeout: 8000 });
+  await page.click("#rsRowsCsv");
+  const f2 = await dl2;
+  ok("the rows download too", /magpms-sales-rows-/.test(f2.suggestedFilename()),
+     f2.suggestedFilename());
+  const b2 = await readFile(await f2.path(), "utf8");
+  /* Voided is its own column, not a word inside the payment cell - in a
+     spreadsheet somebody will sort or filter on it, and a suffix cannot be
+     sorted on. */
+  ok("voided is a column of its own", b2.includes('"Payment","Customer","Voided"'),
+     b2.slice(0, 140));
+  ok("and the voided sale says yes", /"yes"/.test(b2), b2.slice(0, 600));
+  ok("every row is there, not just the first page", b2.split("\r\n").length === 6,
+     String(b2.split("\r\n").length));
+}
+
+{ // one branch's research must not sit under another branch's heading
+  await page.click('#rail [data-site="s-evil"]');
+  await page.click('.mi[data-s="research"]');
+  await page.waitForFunction(() =>
+    document.querySelector("#rsBody").textContent.includes("Choose a range"), null, { timeout: 5000 });
+  ok("switching branch clears it", await page.locator("#rsRowsCsv").isDisabled());
+  ok("and the rows with it",
+     (await page.locator("#rsRows").textContent()).includes("Run it above"));
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));
