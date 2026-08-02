@@ -155,6 +155,17 @@ console.log("\n[2] My Day answers the questions a cashier actually has");
 
   // 30000/50000 is 60%, so nothing is low and the card stays away.
   ok("no low-tank card when nothing is low", await page.locator("#lowTankCard").isHidden());
+
+  /* A cashier is asked "have you got diesel?" all day. The stock behind them
+     belongs on the screen they land on, not one tab away. */
+  await page.waitForFunction(() =>
+    document.querySelector("#myStock").textContent !== "0", null, { timeout: 5000 });
+  ok("the branch's fuel stock is on My Day",
+     (await page.locator("#myStock").textContent()) === "30,000",
+     await page.locator("#myStock").textContent());
+  ok("and says how many tanks that is across",
+     /1 tank\b/.test(await page.locator("#myStockSub").textContent()),
+     await page.locator("#myStockSub").textContent());
   await ctx.close();
 }
 
@@ -178,6 +189,10 @@ console.log("\n[3] a tank running low is surfaced before a customer finds it");
   const low = await page.locator("#lowTankList").textContent();
   ok("the low tank is named", /Tank 1/.test(low), low);
   ok("the healthy one is not", !/Tank 2/.test(low), low);
+  // Stock is the whole branch, low tank or not: 4,000 + 40,000.
+  ok("stock counts every tank, not just the healthy ones",
+     (await page.locator("#myStock").textContent()) === "44,000",
+     await page.locator("#myStock").textContent());
   await ctx.close();
 }
 
@@ -202,6 +217,8 @@ console.log("\n[4] a cashier approved without a branch");
   const tanks = await page.locator("#tankList").textContent();
   ok("the tank panel blames the branch, not the tanks",
      /no branch assigned/i.test(tanks), tanks);
+  ok("and stock reads zero rather than a stale number",
+     (await page.locator("#myStock").textContent()) === "0");
   ok("it does not claim the tanks are missing",
      !/no tanks configured/i.test(tanks), tanks);
 
