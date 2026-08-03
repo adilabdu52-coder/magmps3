@@ -130,6 +130,22 @@ const DATA = {
       author: "Owner", created_at: iso(24), updated_at: iso(2) }
   ],
   admin_resolve_correction: { success: true, message: "sale corrected" },
+  admin_set_tank_level: { success: true, message: "Tank 1 set to 12400 L", was: 12000, now: 12400 },
+  admin_reset_preview: {
+    success: true, from: "2026-08-01", to: "2026-08-03", branch: "every branch",
+    sales: 17, voided_sales: 1, shifts: 12, attendance: 5,
+    expenses: 0, deliveries: 1, corrections: 0,
+    fuel_to_return: [{ branch: "Hirna", fuel: "Diesel", liters: 29250 }],
+    credit_to_clear: [{ customer: "Dashen Transport", etb: 5000 }],
+    message: "nothing has been deleted - this is only a preview"
+  },
+  admin_reset_transactions: {
+    success: true, message: "17 sales removed, 0 L returned to the tanks",
+    from: "2026-08-01", to: "2026-08-03",
+    sales: 17, shifts: 12, attendance: 5, expenses: 0, deliveries: 1, corrections: 0,
+    liters_returned: 0, credit_cleared: 0,
+    no_tank_for: [], over_capacity: []
+  },
   admin_backup: {
     magpms_backup_version: 1, generated_at: "2026-07-31T21:00:00Z", timezone: "Africa/Addis_Ababa",
     counts: { stations: 2, staff: 4, tanks: 20, sales: 600, expenses: 0 },
@@ -860,6 +876,134 @@ console.log("\n[14] research: the shape, and the rows underneath it");
   ok("switching branch clears it", await page.locator("#rsRowsCsv").isDisabled());
   ok("and the rows with it",
      (await page.locator("#rsRows").textContent()).includes("Run it above"));
+}
+
+console.log("\n[15] clearing trading data");
+
+/* There is no undo but the backup file, so the gates matter more than the
+   feature. Every check here is a way somebody deletes three days of trade by
+   accident. */
+{
+  await page.click('#rail [data-site="all"]');
+  await page.click('.mi[data-s="backup"]');
+  await page.waitForFunction(() =>
+    document.getElementById("rzBtn").disabled === true, null, { timeout: 5000 });
+  ok("the delete button starts dead", await page.locator("#rzBtn").isDisabled());
+
+  // Typing the word alone is not enough - nothing has been read yet.
+  await page.fill("#rzConfirm", "RESET");
+  ok("the word alone does not arm it", await page.locator("#rzBtn").isDisabled());
+
+  await page.fill("#rzFrom", "2026-08-01");
+  await page.fill("#rzTo", "2026-08-03");
+  await page.click("#rzPreview");
+  await page.waitForFunction(() =>
+    document.querySelector("#rzPreviewOut").textContent.includes("17"), null, { timeout: 5000 });
+
+  const prev = await page.locator("#rzPreviewOut").textContent();
+  ok("the preview says how much goes", /17/.test(prev), prev);
+  ok("and how much fuel comes back", /29,250 L/.test(prev), prev);
+  ok("and whose credit is cleared", /Dashen Transport/.test(prev), prev);
+  ok("it says plainly that nothing has been deleted", /Nothing has been deleted/.test(prev), prev);
+  ok("and no delete was sent",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_reset_transactions"));
+
+  // Preview read AND word typed: only now.
+  await page.fill("#rzConfirm", "RESET");
+  await page.waitForFunction(() =>
+    document.getElementById("rzBtn").disabled === false, null, { timeout: 5000 });
+  ok("preview plus the word arms it", !(await page.locator("#rzBtn").isDisabled()));
+
+  /* The dangerous one: read a preview of one range, then change the dates.
+     The button must go dead again or somebody deletes what they never saw. */
+  await page.fill("#rzTo", "2026-08-20");
+  await page.waitForFunction(() =>
+    document.getElementById("rzBtn").disabled === true, null, { timeout: 5000 });
+  ok("changing a date throws the preview away", await page.locator("#rzBtn").isDisabled());
+  ok("and clears what was on screen",
+     (await page.locator("#rzPreviewOut").textContent()) === "");
+
+  // Same for the restore switch: a preview of one is not a preview of the other.
+  await page.fill("#rzTo", "2026-08-03");
+  await page.click("#rzPreview");
+  await page.waitForFunction(() =>
+    document.getElementById("rzBtn").disabled === false, null, { timeout: 5000 });
+  await page.uncheck("#rzRestore");
+  ok("changing the restore switch throws it away too",
+     await page.locator("#rzBtn").isDisabled());
+
+  /* With restore off the preview must NOT promise fuel going back, because
+     none will. */
+  await page.click("#rzPreview");
+  await page.waitForFunction(() =>
+    document.querySelector("#rzPreviewOut").textContent.includes("touched"),
+    null, { timeout: 5000 });
+  // The markup wraps mid-sentence, so the rendered text carries newlines.
+  const off = (await page.locator("#rzPreviewOut").textContent()).replace(/\s+/g, " ");
+  ok("with restore off it promises no fuel back", !/29,250 L/.test(off), off);
+  ok("and says the tanks are left alone",
+     /tanks and the credit accounts will not be touched/.test(off), off);
+
+  await page.fill("#rzConfirm", "RESET");
+  await page.waitForFunction(() =>
+    document.getElementById("rzBtn").disabled === false, null, { timeout: 5000 });
+  await page.click("#rzBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#rzResult").textContent.includes("17 sales"), null, { timeout: 5000 });
+
+  const done = await page.locator("#rzResult").textContent();
+  ok("it reports what went", /17 sales/.test(done) && /12 shifts/.test(done), done);
+  ok("and sends people to the dipstick", /dip the tanks/.test(done), done);
+  ok("the restore choice reached the database",
+     await page.evaluate(() => JSON.stringify(window.__calls).includes("admin_reset_transactions")));
+
+  /* Used once. Leaving the gates open invites a second run over a range that
+     is now empty, or worse, a neighbouring one. */
+  ok("the button is dead again afterwards", await page.locator("#rzBtn").isDisabled());
+  ok("and the typed word is cleared",
+     (await page.locator("#rzConfirm").inputValue()) === "");
+}
+
+console.log("\n[16] saying what is actually in a tank");
+
+/* Every other tank figure is arithmetic. This is the one that is a
+   measurement, and without it a wrong tank can only be fixed by recording a
+   delivery that never arrived. */
+{
+  await page.click('.mi[data-s="tanks"]');
+  await page.waitForFunction(() =>
+    document.querySelectorAll("#tlTank option").length > 0, null, { timeout: 5000 });
+
+  const opts = await page.locator("#tlTank").textContent();
+  ok("the picker says what each tank reads now", /12,000 L/.test(opts), opts);
+
+  await page.click("#tlBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#tlMsg").textContent.length > 0, null, { timeout: 5000 });
+  ok("a level is required",
+     /Enter the litres/.test(await page.locator("#tlMsg").textContent()),
+     await page.locator("#tlMsg").textContent());
+  ok("and nothing was sent",
+     !JSON.stringify(await page.evaluate(() => window.__calls)).includes("admin_set_tank_level"));
+
+  /* Zero is a real reading - an empty tank - and must not be rejected as
+     "nothing entered". */
+  await page.fill("#tlLiters", "0");
+  await page.click("#tlBtn");
+  await page.waitForFunction(() =>
+    JSON.stringify(window.__calls).includes("admin_set_tank_level"), null, { timeout: 5000 });
+  ok("an empty tank is a valid reading", true);
+
+  await page.fill("#tlLiters", "12400");
+  await page.fill("#tlNote", "dipped after the reset");
+  await page.click("#tlBtn");
+  await page.waitForFunction(() =>
+    document.querySelector("#tlMsg").textContent.includes("12400"), null, { timeout: 5000 });
+  ok("the new level is confirmed",
+     /set to 12400/.test(await page.locator("#tlMsg").textContent()));
+  ok("the boxes are cleared for the next tank",
+     (await page.locator("#tlLiters").inputValue()) === ""
+     && (await page.locator("#tlNote").inputValue()) === "");
 }
 
 ok("still no uncaught page errors", pageErrors.length === 0, pageErrors.join("\n        "));

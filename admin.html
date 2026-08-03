@@ -196,6 +196,27 @@
         <input type="text" id="dvNote" placeholder="optional"/></div>
       <button class="btn btn-gold" id="dvBtn">🚚 Record Delivery</button>
       <div class="msg" id="dvMsg"></div>
+
+      <!-- Every other tank figure in the app is arithmetic: a sale takes fuel
+           out, a delivery puts it in. This is the one that is a measurement.
+           Without it, a manager whose tank reads wrong has to record a
+           delivery that never arrived - which fixes the number and puts a lie
+           in the delivery history. -->
+      <div class="divider"></div>
+      <h2>Correct a tank level</h2>
+      <p class="card-note">For when you have dipped the tank and the app disagrees. This replaces the
+        level outright rather than adding to it — it is a reading, not a delivery. It is written into
+        the notes so a stock figure that changed by hand can always be told from one that drifted.</p>
+      <div class="grid2">
+        <div class="field"><label for="tlTank">Tank</label><select id="tlTank"></select></div>
+        <div class="field"><label for="tlLiters">Litres in the tank now</label>
+          <input type="number" id="tlLiters" min="0" step="1" inputmode="numeric"/></div>
+      </div>
+      <div class="field"><label for="tlNote">Note</label>
+        <input type="text" id="tlNote" placeholder="dipped after the reset"/></div>
+      <button class="btn btn-blue" id="tlBtn">📏 Set the level</button>
+      <div class="msg" id="tlMsg"></div>
+
       <div class="divider"></div>
       <h2>Recent deliveries</h2>
       <p class="card-note">Every delivery is recorded against the tank and the person who entered it, so a stock level can always be traced back to how it got there.</p>
@@ -534,6 +555,50 @@
         rows in order and recreating sign-ins in Supabase first — logins are not in the file and cannot
         be. What it is good for: proving what the books said on a given day, moving to another project,
         and answering “what did we sell last March” after something has gone wrong.</p>
+    </div>
+
+    <!-- Reset lives under Backup on purpose: the backup is the only way back
+         from it, and putting them on the same screen makes that hard to
+         miss. Two gates before anything is deleted - a preview that must be
+         run for the exact dates in the boxes, and the word RESET typed by
+         hand - because there is no undo. -->
+    <div class="card">
+      <h2>Clear trading data</h2>
+      <p class="card-note"><strong>Take the backup above first.</strong> This permanently removes sales,
+        shifts, attendance, expenses, deliveries and corrections over a date range, and puts the fuel
+        back into the tanks and the credit back off the accounts as it goes. Deleting sales any other
+        way leaves the tanks reading short for ever.</p>
+      <p class="card-note">Branches, staff, pumps, prices, credit customers and notes are never
+        touched. Use the branch rail above to limit it to one branch.</p>
+
+      <div class="grid2">
+        <div class="field"><label for="rzFrom">From</label><input type="date" id="rzFrom"/></div>
+        <div class="field"><label for="rzTo">To</label><input type="date" id="rzTo"/></div>
+      </div>
+      <!-- Ticked is the safe default: it is the arithmetic nobody does by
+           hand. Unticked is the honest choice when you are about to dip the
+           tanks anyway, because the restored figure would be overwritten
+           within the minute. -->
+      <label class="field-hint" style="display:block;margin:10px 0">
+        <input type="checkbox" id="rzRestore" checked/>
+        Put the fuel back into the tanks and the credit back off the accounts.
+        Untick if you are going to dip the tanks and enter the real levels yourself.
+      </label>
+      <div class="report-actions">
+        <button class="btn btn-blue" id="rzPreview">👁 Show me what would go</button>
+      </div>
+      <div class="msg" id="rzMsg"></div>
+      <div id="rzPreviewOut"></div>
+
+      <div class="divider"></div>
+      <div class="field">
+        <label for="rzConfirm">Type RESET to confirm</label>
+        <input type="text" id="rzConfirm" placeholder="RESET" autocomplete="off"/>
+      </div>
+      <div class="report-actions">
+        <button class="btn btn-out" id="rzBtn" disabled>🗑 Delete it permanently</button>
+      </div>
+      <div id="rzResult"></div>
     </div>
   </div>
 
@@ -1445,6 +1510,164 @@ function exportStaffReport() {
   toast("Staff report downloaded", "ok");
 }
 
+/* ---------- correcting a tank level ---------- */
+/* A reading, not a delivery. It replaces the level outright, where every
+   other tank write in the app adds to or subtracts from it. */
+async function setTankLevel() {
+  const tank = $("tlTank").value;
+  const litres = Number($("tlLiters").value);
+  if (!tank) { msg("tlMsg", "Choose a tank", "error"); return; }
+  if (!($("tlLiters").value !== "" && litres >= 0)) {
+    msg("tlMsg", "Enter the litres in the tank", "error"); return;
+  }
+
+  const btn = $("tlBtn"); btn.disabled = true;
+  try {
+    const r = await rpc("admin_set_tank_level", {
+      p_tank_id: Number(tank), p_liters: litres, p_note: $("tlNote").value.trim() || null
+    });
+    msg("tlMsg", (r && r.message) || "Failed", r && r.success ? "success" : "error");
+    if (r && r.success) {
+      $("tlLiters").value = ""; $("tlNote").value = "";
+      // The list, the picker and the dashboard all quote this number.
+      await loadTanks();
+      invalidateAll();
+      await loadDashboard();
+    }
+  } catch (e) { msg("tlMsg", "Connection error", "error"); loadFailed("setTankLevel", e); }
+  finally { btn.disabled = false; }
+}
+
+/* ---------- clearing trading data ---------- */
+/* Two gates, because there is no undo but the backup file. The preview must
+   have been run for the EXACT dates now in the boxes, and the word RESET must
+   be typed by hand. Changing either date throws the preview away - otherwise
+   somebody could read a preview of one range and delete another. */
+let rzPreviewed = null;
+
+function rzKey() {
+  /* The restore choice is part of the key: a preview read with the fuel
+     going back is not a preview of a run that leaves the tanks alone. */
+  return `${$("rzFrom").value}|${$("rzTo").value}|${stationParam() || "all"}|${$("rzRestore").checked}`;
+}
+
+function rzGate() {
+  const ready = rzPreviewed !== null && rzPreviewed === rzKey()
+                && $("rzConfirm").value === "RESET";
+  $("rzBtn").disabled = !ready;
+}
+
+async function previewReset() {
+  const from = $("rzFrom").value, to = $("rzTo").value;
+  if (!from || !to) { msg("rzMsg", "Choose both dates", "error"); return; }
+  if (from > to) { msg("rzMsg", "The From date is after the To date", "error"); return; }
+
+  const btn = $("rzPreview"); btn.disabled = true;
+  try {
+    const r = await rpc("admin_reset_preview",
+      { p_from: from, p_to: to, p_station_id: stationParam() });
+    if (!r || r.success === false) {
+      msg("rzMsg", (r && r.message) || "Could not read it", "error");
+      return;
+    }
+
+    const rows = [
+      ["Sales", r.sales], ["— of those already voided", r.voided_sales],
+      ["Shifts", r.shifts], ["Attendance", r.attendance],
+      ["Expenses", r.expenses], ["Deliveries", r.deliveries],
+      ["Corrections", r.corrections]
+    ];
+    /* Litres and money are the part that is easy to get wrong by hand, so
+       they are spelled out rather than summarised. */
+    // With restore off, nothing goes back - so promising that it would is
+    // the one thing this preview must not do.
+    const restore = $("rzRestore").checked;
+    const fuel = !restore ? "" : (r.fuel_to_return || []).map(f =>
+      `<li>${esc(f.branch)} · ${esc(f.fuel)} — <strong>${fmt.int(f.liters)} L</strong> back into the tank</li>`).join("");
+    const credit = !restore ? "" : (r.credit_to_clear || []).map(c =>
+      `<li>${esc(c.customer)} — <strong>${fmt.money(c.etb)} ETB</strong> off the account</li>`).join("");
+
+    $("rzPreviewOut").innerHTML = `
+      <div class="table-scroll"><table>
+        <tbody>${rows.map(([l, v]) =>
+          `<tr><td>${l}</td><td class="mono">${fmt.int(v)}</td></tr>`).join("")}</tbody>
+      </table></div>
+      ${fuel ? `<p class="card-note">Fuel put back:</p><ul class="card-note">${fuel}</ul>` : ""}
+      ${credit ? `<p class="card-note">Credit cleared:</p><ul class="card-note">${credit}</ul>` : ""}
+      ${restore ? "" : `<p class="card-note"><strong>The tanks and the credit accounts will not be
+        touched.</strong> Dip the tanks afterwards and set the real levels under Tanks.</p>`}
+      <p class="card-note">Nothing has been deleted. ${esc(r.branch)}, ${esc(r.from)} to ${esc(r.to)}.</p>`;
+
+    rzPreviewed = rzKey();
+    msg("rzMsg", "", "");
+    rzGate();
+  } catch (e) {
+    msg("rzMsg", "Could not read it", "error");
+    loadFailed("previewReset", e);
+  } finally { btn.disabled = false; }
+}
+
+async function doReset() {
+  // Belt and braces: the button is disabled without these, and the database
+  // refuses without the word too. Three gates for something with no undo.
+  if (rzPreviewed !== rzKey() || $("rzConfirm").value !== "RESET") { rzGate(); return; }
+
+  const btn = $("rzBtn"); btn.disabled = true; btn.textContent = "Deleting…";
+  try {
+    const r = await rpc("admin_reset_transactions", {
+      p_from: $("rzFrom").value, p_to: $("rzTo").value,
+      p_station_id: stationParam(), p_confirm: "RESET",
+      p_restore: $("rzRestore").checked
+    });
+    if (!r || r.success === false) {
+      msg("rzMsg", (r && r.message) || "Could not do it", "error");
+      return;
+    }
+
+    /* Two things that mean somebody has to go and look at something, rather
+       than being buried in a success message. */
+    const over = (r.over_capacity || []).map(t =>
+      `<li>${esc(t.branch)} · ${esc(t.tank)} now reads ${fmt.int(t.liters)} L against a capacity of
+        ${fmt.int(t.capacity)} L — check it against the dipstick</li>`).join("");
+    const lost = (r.no_tank_for || []).map(f =>
+      `<li>${esc(f.branch)} has no tank for ${esc(f.fuel)}, so ${fmt.int(f.liters)} L could not be
+        put back — those litres are unaccounted for</li>`).join("");
+
+    $("rzResult").innerHTML = `
+      <div class="msg success" style="display:block">${esc(r.message)}</div>
+      <p class="card-note">${fmt.int(r.sales)} sales, ${fmt.int(r.shifts)} shifts,
+        ${fmt.int(r.attendance)} attendance, ${fmt.int(r.expenses)} expenses,
+        ${fmt.int(r.deliveries)} deliveries and ${fmt.int(r.corrections)} corrections removed.
+        ${fmt.int(r.liters_returned)} L returned to the tanks and
+        ${fmt.money(r.credit_cleared)} ETB taken off credit.</p>
+      ${over ? `<p class="card-note"><strong>Check these tanks:</strong></p><ul class="card-note">${over}</ul>` : ""}
+      ${lost ? `<p class="card-note"><strong>Nowhere to put this back:</strong></p><ul class="card-note">${lost}</ul>` : ""}
+      <p class="card-note">Now dip the tanks and set the real levels under <strong>Tanks → Correct a
+        tank level</strong>. Only the stick knows what is really in the ground; every other figure
+        here is arithmetic on top of it.</p>`;
+
+    // Used once. Leaving the gates open invites a second run over a range
+    // that is now empty, or worse, a neighbouring one.
+    rzPreviewed = null;
+    $("rzConfirm").value = "";
+    $("rzPreviewOut").innerHTML = "";
+    rzGate();
+    invalidateAll();
+    await loadDashboard();
+    toast("Trading data cleared", "ok");
+  } catch (e) {
+    msg("rzMsg", "Could not do it", "error");
+    loadFailed("doReset", e);
+  } finally {
+    btn.textContent = "🗑 Delete it permanently";
+    /* rzGate, not `disabled = false`. After a successful run the gates are
+       shut on purpose, and blindly re-enabling here would reopen them - the
+       button would sit live over a range that has just been emptied, one
+       stray tap from taking the neighbouring one too. */
+    rzGate();
+  }
+}
+
 /* ---------- research ---------- */
 /* Two queries that belong together. research_totals gives the shape of the
    trade over a period; research_sales gives the sales that make it up. Being
@@ -1691,8 +1914,14 @@ async function loadTanks() {
           ? tankRow({ ...t, tank_name: `${stationName(t.station_id)} · ${t.tank_name}` })
           : tankRow(t)).join("")
       : "No tanks configured";
+    /* The level picker shows what each tank currently reads, because the
+       whole job is comparing that against the stick. Choosing a tank from a
+       list that does not say what it holds means checking on another screen
+       and remembering. */
     $("dvTank").innerHTML = tanks.map(t =>
       `<option value="${esc(t.id)}">${esc(selected === "all" ? stationName(t.station_id) + " · " : "")}${esc(t.tank_name)} (${esc(t.fuel_type)})</option>`).join("");
+    $("tlTank").innerHTML = tanks.map(t =>
+      `<option value="${esc(t.id)}">${esc(selected === "all" ? stationName(t.station_id) + " · " : "")}${esc(t.tank_name)} (${esc(t.fuel_type)}) — now reads ${fmt.int(t.current_liters)} L</option>`).join("");
   } catch (e) { failPanel("tankList", "tanks"); loadFailed("loadTanks", e); }
 }
 
@@ -2019,7 +2248,18 @@ const LOADERS = {
      nothing to fetch on arrival. Clearing the last run's counts stops one
      download's figures being read as another's. */
   notes: loadNotes,
-  backup: async () => { $("bkCounts").innerHTML = ""; msg("bkMsg", "", ""); },
+  backup: async () => {
+    $("bkCounts").innerHTML = ""; msg("bkMsg", "", "");
+    /* The reset shares this screen, and its gates must not survive leaving
+       it - a preview read ten minutes and one branch ago is not consent to
+       delete anything now. */
+    rzPreviewed = null;
+    $("rzConfirm").value = "";
+    $("rzPreviewOut").innerHTML = "";
+    $("rzResult").innerHTML = "";
+    msg("rzMsg", "", "");
+    rzGate();
+  },
   /* A report belongs to the branch and range it was run for. Clearing beats
      leaving one branch's figures sitting under another branch's heading. */
   reports:   async () => {
@@ -2105,6 +2345,16 @@ function bind() {
   $("refreshBtn").addEventListener("click", refreshAll);
   $("priceBtn").addEventListener("click", savePrices);
   $("dvBtn").addEventListener("click", recordDelivery);
+  $("tlBtn").addEventListener("click", setTankLevel);
+  $("rzPreview").addEventListener("click", previewReset);
+  $("rzBtn").addEventListener("click", doReset);
+  /* Any change to what would be deleted throws the preview away. Otherwise
+     somebody reads a preview of one range and deletes another. */
+  ["rzFrom", "rzTo", "rzRestore"].forEach(id =>
+    $(id).addEventListener("change", () => {
+      rzPreviewed = null; $("rzPreviewOut").innerHTML = ""; rzGate();
+    }));
+  $("rzConfirm").addEventListener("input", rzGate);
   $("ccBtn").addEventListener("click", addCustomer);
   $("exBtn").addEventListener("click", addExpense);
   $("staffSearch").addEventListener("input", renderStaff);
